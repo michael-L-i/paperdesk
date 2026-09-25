@@ -12,7 +12,8 @@ const port=4318,url=`http://127.0.0.1:${port}`;
 const latex=String.raw`\documentclass{article}\begin{document}Solve $2x+3=11$.\end{document}`;
 await fs.mkdir(path.join(root,'Course'));
 await fs.mkdir(path.join(root,'Import'));
-await fs.writeFile(path.join(root,'Course/main.tex'),latex);
+const longLatex=latex.replace('\\end{document}','\\newpage Second page.\\newpage Third page.\\end{document}')+'\n'+Array.from({length:150},(_,i)=>'% line '+i).join('\n');
+await fs.writeFile(path.join(root,'Course/main.tex'),longLatex);
 await fs.writeFile(path.join(root,'Course/other.tex'),latex.replace('Solve','Find x in'));
 await fs.writeFile(path.join(root,'Import/exam.tex'),latex);
 await run('tectonic',['--untrusted',path.join(root,'Import/exam.tex')]);
@@ -46,6 +47,27 @@ try {
   assert.equal(await page.getByLabel('Codex request').inputValue(),'Keep this draft.');
   assert.equal(await page.getByLabel('Codex request').isVisible(),true);
   await page.getByLabel('Codex request').fill('');
+  // Wheel input is contained by the pane under the pointer, including at boundaries.
+  const positions=()=>page.evaluate(()=>({editor:document.querySelector('.cm-scroller').scrollTop,pdf:document.querySelector('.pdf-pages').scrollTop,page:document.scrollingElement.scrollTop}));
+  const editorPane=page.locator('.cm-scroller');
+  await editorPane.hover();await page.mouse.wheel(0,500);
+  await page.waitForFunction(()=>document.querySelector('.cm-scroller').scrollTop>0);
+  const leftScrolled=await positions();assert.equal(leftScrolled.pdf,0);assert.equal(leftScrolled.page,0);
+  await page.locator('.pdf-pages').hover();await page.mouse.wheel(0,600);
+  await page.waitForFunction(()=>document.querySelector('.pdf-pages').scrollTop>0);
+  const rightScrolled=await positions();assert.equal(rightScrolled.editor,leftScrolled.editor);assert.equal(rightScrolled.page,0);
+  await page.evaluate(()=>{const el=document.querySelector('.cm-scroller');el.scrollTop=el.scrollHeight;});
+  await editorPane.hover();await page.mouse.wheel(0,500);
+  await page.waitForTimeout(200);
+  assert.equal((await positions()).pdf,rightScrolled.pdf);assert.equal((await positions()).page,0);
+  assert.equal(await page.evaluate(()=>document.scrollingElement.scrollHeight<=window.innerHeight),true);
+  await page.getByRole('button',{name:'Expand chat history'}).click();
+  const handle=await page.getByRole('separator',{name:'Resize chat history'}).boundingBox();
+  await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);await page.mouse.down();await page.mouse.move(handle.x+handle.width/2,handle.y-75,{steps:5});await page.mouse.up();
+  assert.ok(Number(await page.getByRole('separator',{name:'Resize chat history'}).getAttribute('aria-valuenow'))>250);
+  const inputBox=await page.getByLabel('Codex request').boundingBox();assert.ok(inputBox.y+inputBox.height<960);
+  await page.getByRole('button',{name:'Collapse chat history'}).click();
+
 
   const editor=page.locator('.cm-content');
   await editor.click();await page.keyboard.press('Meta+End');await page.keyboard.insertText('\n% My phrasing: first isolate the variable, then simplify.');
