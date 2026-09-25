@@ -40,4 +40,4 @@ npm run test:browser
 npm run test:ai # Uses your Codex account
 ```
 
-Browser tests use temporary directories and stub the embedded PDF viewer to avoid headless Chrome's PDF-plugin issues; actual compilation and PDF bytes are tested separately. `CHROME_BIN` overrides the Chrome executable for tests.
+Browser tests use temporary directories and render real compiled PDFs with PDF.js. `CHROME_BIN` overrides the Chrome executable for tests.

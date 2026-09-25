@@ -29,12 +29,13 @@ try {
   browser=await chromium.launch({executablePath:process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
   page=await browser.newPage({viewport:{width:1440,height:960}});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.route('**/api/pdf?**',route=>route.fulfill({status:200,contentType:'text/html',body:'<body style="background:white"></body>'}));
   let chosenDirectory='Course';
   await page.route('**/api/choose-directory',route=>route.fulfill({json:chosenDirectory === null ? {cancelled:true} : {path:chosenDirectory}}));
   await page.goto(url);
   await page.getByRole('button',{name:'Choose directory',exact:true}).click();
-  await page.locator('iframe').waitFor({timeout:180000});
+  await page.locator('canvas[data-rendered=true]').first().waitFor({timeout:180000});
+  assert.equal(await page.locator('iframe').count(),0);
+  assert.equal(await page.getByLabel('Download PDF').count(),1);
   assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/main.tex');
   await page.getByLabel('Codex request').fill('Keep this draft.');
   await page.getByRole('button',{name:'Expand chat history'}).click();
@@ -52,7 +53,7 @@ try {
   assert.match(await fs.readFile(path.join(root,'Course/main.tex'),'utf8'),/My phrasing/);
   assert.equal((await(await fetch(url+'/api/style')).json()).examples,1);
   await page.getByLabel('Primary TeX file').selectOption('Course/other.tex');
-  await page.waitForFunction(()=>document.querySelector('iframe')?.src.includes('other.pdf'));
+  await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('other.pdf'));
   await page.getByRole('button',{name:'More',exact:true}).click();
   await page.getByRole('button',{name:'Writing style',exact:true}).click();
   await page.getByLabel('Writing profile').fill('Use short sentences.');
@@ -69,7 +70,7 @@ try {
   await page.getByLabel('Codex request').fill('Convert this PDF to LaTeX.');
   await page.getByRole('button',{name:'Send to Codex'}).click();
   await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='Import/exam_solutions.tex',{},{timeout:60000});
-  await page.waitForFunction(()=>document.querySelector('iframe')?.src.includes('exam_solutions.pdf'),{},{timeout:180000});
+  await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('exam_solutions.pdf'),{},{timeout:180000});
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam.pdf')),originalPDF);
   assert.match(await fs.readFile(path.join(root,'Import/exam_solutions.tex'),'utf8'),/Solve/);
   assert.equal((await(await fetch(url+'/api/style')).json()).examples,1,'AI output excluded from human style');
