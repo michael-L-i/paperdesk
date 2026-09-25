@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import CodeMirror from '@uiw/react-codemirror';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, FilePlus, Download, MoreHorizontal } from 'lucide-react';
+import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, FilePlus, Download, MoreHorizontal } from 'lucide-react';
 import './style.css';
 const extensions = [StreamLanguage.define(stex)];
 async function api(url, body, method = 'POST') {
@@ -18,7 +18,9 @@ function App() {
   const [doc,setDoc]=useState(null), [text,setText]=useState(''), [status,setStatus]=useState('');
   const [pdf,setPdf]=useState(null), [compiling,setCompiling]=useState(false), [error,setError]=useState('');
   const [dialog,setDialog]=useState(null), [newName,setNewName]=useState('main.tex'), [busy,setBusy]=useState(false);
-  const [codexOpen,setCodexOpen]=useState(true), [prompt,setPrompt]=useState(''), [source,setSource]=useState('');
+  const [historyOpen,setHistoryOpen]=useState(false), [prompt,setPrompt]=useState(''), [source,setSource]=useState('');
+  const [historyHeight,setHistoryHeight]=useState(180);
+  const historyDrag=useRef(null);
   const [job,setJob]=useState(null), [starting,setStarting]=useState(false), [messages,setMessages]=useState([]);
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
   const state=useRef({doc:null,text:'',dir:null}), saves=useRef(Promise.resolve()), building=useRef(false);
@@ -161,7 +163,7 @@ function App() {
     try{await save();const next=await api('/new-document',{directory:dir.path,name:newName});accept(next);setPdf(null);await refreshDirectory();setDialog(null);}catch(e){fail(e);}
   }
   async function suggestStyle(){
-    try{const saved=await save();const request=await api('/ai',{path:saved.path,revision:saved.revision,mode:'style',instruction:'Suggest an updated writing profile from my edits.'});const pending={id:request.id,directory:dir.path};setJob(pending);sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));setDialog(null);setCodexOpen(true);}catch(e){fail(e);}
+    try{const saved=await save();const request=await api('/ai',{path:saved.path,revision:saved.revision,mode:'style',instruction:'Suggest an updated writing profile from my edits.'});const pending={id:request.id,directory:dir.path};setJob(pending);sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));setDialog(null);setHistoryOpen(true);}catch(e){fail(e);}
   }
   async function loadHistory(){setMenu(false);try{setHistory(await api('/history?path='+encodeURIComponent(doc.path)));setDialog('history');}catch(e){fail(e);}}
   async function loadStyle(){setMenu(false);try{const s=await api('/style');setStyle(s.text);setExamples(s.examples);setDialog('style');}catch(e){fail(e);}}
@@ -177,14 +179,14 @@ function App() {
       <button title="New TeX file" aria-label="New TeX file" disabled={!dir||aiBusy} onClick={()=>{setNewName('main.tex');setDialog('new');}}><FilePlus size={15}/></button>
       <span className="status">{status}</span>
       <div className="spacer"/>
-      <button onClick={()=>setCodexOpen(!codexOpen)} className={codexOpen?'active':''}>Codex</button>
+      
       <button disabled={!doc||compiling||aiBusy} onClick={()=>{setError('');compile();}}><RefreshCw size={14} className={compiling?'spin':''}/>{compiling?'Compiling':'Compile'}</button>
       <div className="menu-wrap"><button aria-label="More" onClick={()=>setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu&&<div className="menu"><button disabled={!doc||aiBusy} onClick={loadHistory}>History</button><button onClick={loadStyle}>Writing style</button><button disabled={!dir||aiBusy} onClick={()=>{refreshDirectory().catch(fail);setMenu(false);}}>Refresh files</button></div>}</div>
     </header>
     {error&&<div className="error" role="alert"><details><summary>{error.split('\n')[0].slice(0,180)}</summary><pre>{error}</pre></details>{status==='Save failed'&&<><button onClick={downloadDraft}>Download draft</button><button onClick={reloadDisk}>Use disk version</button></>}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
     <main>
       <section className="left"><div className="panel-title">{doc?.path.split('/').at(-1)||'LaTeX'}</div><div className="editor">{doc?<CodeMirror value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{dir?'Select a .tex file or ask Codex to create one.':'Choose a directory.'}</div>}</div>
-      {codexOpen&&<section className="codex"><div className="codex-title"><span>Codex</span><span className="status">{aiBusy?'Working…':''}</span><button title="Collapse Codex" onClick={()=>setCodexOpen(false)}><ChevronUp size={14}/></button></div>{messages.length>0&&<div className="messages">{messages.map((m,i)=><div key={i}><strong>{m.role}</strong><p>{m.text}</p></div>)}</div>}<textarea aria-label="Codex request" placeholder="Ask Codex to edit or create a file, or convert a PDF…" disabled={!dir||aiBusy} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();send();}}}/><div className="codex-actions"><select aria-label="Attach PDF" value={source} disabled={aiBusy||!dir} onChange={e=>setSource(e.target.value)}><option value="">Attach PDF…</option>{pdfFiles.map(f=><option key={f.path} value={f.path}>{f.name}</option>)}</select><div className="spacer"/><button className="send" aria-label="Send to Codex" disabled={!prompt.trim()||!dir||aiBusy} onClick={send}><ArrowUp size={16}/></button></div></section>}
+      <section className="codex">{historyOpen&&<div className="chat-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onPointerUp={()=>{historyDrag.current=null;}} onPointerCancel={()=>{historyDrag.current=null;}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/> }<div className="codex-title"><span>Codex</span><span className="status">{aiBusy?'Working…':''}</span><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(!historyOpen)}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>{historyOpen&&<div className="messages" style={{height:historyHeight}}>{!messages.length&&<span className="muted">No messages yet.</span>}{messages.map((m,i)=><div key={i}><strong>{m.role}</strong><p>{m.text}</p></div>)}</div>}<textarea aria-label="Codex request" placeholder="Ask Codex to edit or create a file, or convert a PDF…" disabled={!dir||aiBusy} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();send();}}}/><div className="codex-actions"><select aria-label="Attach PDF" value={source} disabled={aiBusy||!dir} onChange={e=>setSource(e.target.value)}><option value="">Attach PDF…</option>{pdfFiles.map(f=><option key={f.path} value={f.path}>{f.name}</option>)}</select><div className="spacer"/><button className="send" aria-label="Send to Codex" disabled={!prompt.trim()||!dir||aiBusy} onClick={send}><ArrowUp size={16}/></button></div></section>
       </section>
       <section className="right"><div className="panel-title"><span>PDF</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&pdf.revision!==doc?.revision?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<iframe title="Compiled PDF" src={fileURL(pdf.path,pdf.version)+'#view=FitH'}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
     </main>

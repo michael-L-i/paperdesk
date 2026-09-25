@@ -36,6 +36,16 @@ try {
   await page.getByRole('button',{name:'Choose directory',exact:true}).click();
   await page.locator('iframe').waitFor({timeout:180000});
   assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/main.tex');
+  await page.getByLabel('Codex request').fill('Keep this draft.');
+  await page.getByRole('button',{name:'Expand chat history'}).click();
+  const resize=page.getByRole('separator',{name:'Resize chat history'});
+  await resize.focus();await page.keyboard.press('ArrowUp');
+  assert.equal(await resize.getAttribute('aria-valuenow'),'200');
+  await page.getByRole('button',{name:'Collapse chat history'}).click();
+  assert.equal(await page.getByLabel('Codex request').inputValue(),'Keep this draft.');
+  assert.equal(await page.getByLabel('Codex request').isVisible(),true);
+  await page.getByLabel('Codex request').fill('');
+
   const editor=page.locator('.cm-content');
   await editor.click();await page.keyboard.press('Meta+End');await page.keyboard.insertText('\n% My phrasing: first isolate the variable, then simplify.');
   await page.getByText('Saved',{exact:true}).waitFor();
