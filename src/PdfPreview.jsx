@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { getDocument, GlobalWorkerOptions, TextLayer } from 'pdfjs-dist';
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import { TextLayerBuilder } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 GlobalWorkerOptions.workerSrc = workerURL;
 
@@ -34,10 +35,11 @@ function PdfPage({ document, number, width, scrollRoot, onSourceClick }) {
     if (!page || !width) return;
     const target = textContainer.current;
     const viewport = page.getViewport({ scale: width / page.getViewport({ scale: 1 }).width });
-    target.style.setProperty('--total-scale-factor', viewport.scale);
-    const layer = new TextLayer({ textContentSource: page.streamTextContent(), container: target, viewport });
+    const layer = new TextLayerBuilder({ pdfPage: page, onAppend: div => target.append(div) });
+    layer.div.classList.add('pdf-text-layer');
+    layer.div.style.setProperty('--total-scale-factor', viewport.scale);
     let cancelled = false;
-    layer.render().then(() => { if (!cancelled) target.dataset.rendered = 'true'; }).catch(e => {
+    layer.render({ viewport }).then(() => { if (!cancelled) layer.div.dataset.rendered = 'true'; }).catch(e => {
       if (!cancelled) setError(e.message);
     });
     return () => { cancelled = true; layer.cancel(); target.replaceChildren(); delete target.dataset.rendered; };
@@ -51,7 +53,7 @@ function PdfPage({ document, number, width, scrollRoot, onSourceClick }) {
       onSourceClick({page:number,x,y:page.view[3]-y});
     }}>
     <canvas ref={canvas} role="img" aria-label={`PDF page ${number}`}/>
-    <div className="pdf-text-layer" ref={textContainer}/>
+    <div className="pdf-text-host" ref={textContainer}/>
     {error && <div className="pdf-error">{error}</div>}
   </div>;
 }

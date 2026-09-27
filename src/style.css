@@ -13,3 +13,10 @@
 .pdf-text-layer .markedContent{display:contents;}
 .pdf-text-layer ::selection{background:rgba(0,100,255,.3);color:transparent;}
 .pdf-text-layer br::selection{background:transparent;}
+
+.pdf-text-host{position:absolute;inset:0;}
+.pdf-text-layer{outline:none;}
+/* PDF.js moves this selection boundary while dragging through whitespace. */
+.pdf-text-layer .endOfContent{display:block;position:absolute;inset:100% 0 0;z-index:0;cursor:default;user-select:none;-webkit-user-select:none;}
+.pdf-text-layer.selecting .endOfContent{top:0;}
+.pdf-text-layer span[role="img"]{user-select:none;-webkit-user-select:none;cursor:default;}

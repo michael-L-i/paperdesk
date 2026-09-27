@@ -22,6 +22,10 @@ Solve $2x+3=11$.
 \section{Second}
 Second target paragraph.
 
+Alpha first selectable line.\\
+Bravo middle selectable line.\\
+Charlie last selectable line.
+
 \newpage
 \section{Third}
 Third target paragraph.
@@ -93,6 +97,29 @@ try {
     await page.keyboard.press('Meta+c');
     assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),selectedPDFText);
   } finally {await page.evaluate(text=>navigator.clipboard.writeText(text),previousClipboard);}
+  const middle=page.locator('.pdf-page').nth(1).locator('.pdf-text-layer span').filter({hasText:'Bravo middle selectable line.'});
+  const middleBox=await middle.boundingBox();
+  async function dragSelection(start,end){
+    await page.evaluate(()=>window.getSelection().removeAllRanges());
+    await page.waitForFunction(()=>!document.querySelector('.pdf-text-layer.selecting'));
+    await page.mouse.move(start.x,start.y);await page.mouse.down();
+    await page.mouse.move(end.x,end.y,{steps:20});
+    await page.mouse.up();
+    return page.evaluate(()=>window.getSelection().toString());
+  }
+  const middleY=middleBox.y+middleBox.height/2;
+  const intoWhitespace=await dragSelection({x:middleBox.x+1,y:middleY},{x:middleBox.x+middleBox.width+60,y:middleY});
+  assert.match(intoWhitespace,/Bravo middle selectable line/);
+  assert.ok(!/Alpha|Charlie|Second|Third/.test(intoWhitespace),'Dragging beyond a line must not grab the page');
+  const backwards=await dragSelection({x:middleBox.x+middleBox.width-5,y:middleY},{x:middleBox.x+5,y:middleY});
+  assert.match(backwards,/ravo middle selectable lin/);
+  assert.ok(!/Alpha|Charlie|Second|Third/.test(backwards),'Backward drag stays on the intended line');
+  const last=page.locator('.pdf-page').nth(1).locator('.pdf-text-layer span').filter({hasText:'Charlie last selectable line.'});
+  const lastBox=await last.boundingBox();
+  const twoLines=await dragSelection({x:middleBox.x+1,y:middleY},{x:lastBox.x+lastBox.width-1,y:lastBox.y+lastBox.height/2});
+  assert.match(twoLines,/Bravo middle selectable line/);assert.match(twoLines,/Charlie last selectable line/);
+  assert.ok(!/Alpha|Second|Third/.test(twoLines),'Multiline selection excludes surrounding text');
+  assert.equal(inverseRequests,0,'Selection gestures must not trigger inverse search');
   const firstJump=await clickPDFWord(2,'Second');
   assert.equal(inverseRequests,1,'Double-click jumps once');
   assert.equal(firstJump.path,'Course/main.tex');
