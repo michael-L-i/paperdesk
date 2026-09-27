@@ -3,16 +3,33 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { run } from '../server/process.js';
 const app=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'paperdesk-browser-'));
-const port=4318,url=`http://127.0.0.1:${port}`;
+const port=await new Promise(resolve=>{const probe=net.createServer();probe.listen(0,'127.0.0.1',()=>{const port=probe.address().port;probe.close(()=>resolve(port));});}),url=`http://127.0.0.1:${port}`;
 const latex=String.raw`\documentclass{article}\begin{document}Solve $2x+3=11$.\end{document}`;
 await fs.mkdir(path.join(root,'Course'));
 await fs.mkdir(path.join(root,'Import'));
-const longLatex=latex.replace('\\end{document}','\\newpage Second page.\\newpage Third page.\\end{document}')+'\n'+Array.from({length:150},(_,i)=>'% line '+i).join('\n');
+const longLatex=String.raw`\documentclass{article}
+\begin{document}
+\section{First}
+Solve $2x+3=11$.
+
+\newpage
+\section{Second}
+Second target paragraph.
+
+\newpage
+\section{Third}
+Third target paragraph.
+
+\input{parts/answer}
+\end{document}`+'\n'+Array.from({length:150},(_,i)=>'% line '+i).join('\n');
+await fs.mkdir(path.join(root,'Course/parts'));
+await fs.writeFile(path.join(root,'Course/parts/answer.tex'),'Included answer paragraph.\n');
 await fs.writeFile(path.join(root,'Course/main.tex'),longLatex);
 await fs.writeFile(path.join(root,'Course/other.tex'),latex.replace('Solve','Find x in'));
 await fs.writeFile(path.join(root,'Import/exam.tex'),latex);
@@ -38,6 +55,51 @@ try {
   assert.equal(await page.locator('iframe').count(),0);
   assert.equal(await page.getByLabel('Download PDF').count(),1);
   assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/main.tex');
+
+  const bbox=(await run('pdftotext',['-bbox',path.join(root,'Course/main.pdf'),'-'])).stdout;
+  async function clickPDFWord(pageNumber,word){
+    const pageXML=[...bbox.matchAll(/<page width="([\d.]+)" height="([\d.]+)">([\s\S]*?)<\/page>/g)][pageNumber-1];
+    const match=[...pageXML[3].matchAll(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]+)<\/word>/g)].find(m=>m[5]===word);
+    assert.ok(match);
+    const canvas=page.getByRole('img',{name:`PDF page ${pageNumber}`,exact:true});
+    await canvas.scrollIntoViewIfNeeded();
+    await page.waitForFunction(n=>document.querySelectorAll('.pdf-page canvas')[n-1]?.dataset.rendered==='true',pageNumber);
+    const box=await canvas.boundingBox();
+    const response=page.waitForResponse(r=>r.url().includes('/api/inverse-search'));
+    await canvas.click({position:{x:(+match[1]+ +match[3])/2/+pageXML[1]*box.width,y:(+match[2]+ +match[4])/2/+pageXML[2]*box.height}});
+    const result=await response;
+    assert.equal(result.status(),200,await result.text());
+    await page.waitForFunction(()=>document.activeElement?.classList.contains('cm-content'));
+    return result.json();
+  }
+  const firstJump=await clickPDFWord(2,'Second');
+  assert.equal(firstJump.path,'Course/main.tex');
+  assert.ok(firstJump.line===7||firstJump.line===8);
+  // Selected text must be the actual source line in CodeMirror, not just an API result.
+  await page.waitForFunction(()=>window.getSelection()?.toString().includes('Second'));
+  assert.equal(await page.evaluate(()=>window.getSelection().toString()),longLatex.split('\n')[firstJump.line-1]);
+  const includedJump=await clickPDFWord(3,'Included');
+  assert.equal(includedJump.path,'Course/parts/answer.tex');
+  await page.waitForFunction(()=>document.querySelector('.left .panel-title')?.textContent==='answer.tex');
+  assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/main.tex','Included-file navigation retains the primary compile target');
+  await page.waitForFunction(()=>window.getSelection()?.toString()==='Included answer paragraph.');
+  const includedBefore=await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8');
+  await page.keyboard.insertText('Updated included answer.');
+  await page.getByText('Saved',{exact:true}).waitFor();
+  assert.equal(await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8'),'Updated included answer.\n');
+  await page.waitForFunction(()=>document.querySelector('.right .status')?.textContent==='');
+  assert.equal(await page.locator('.pdf-pages').getAttribute('data-url').then(u=>u.includes('main.pdf')),true);
+  // Undo the edit so the later provenance check still has one human example.
+  await page.keyboard.press('Meta+z');
+  await page.getByText('Saved',{exact:true}).waitFor();
+  assert.equal(await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8'),includedBefore);
+  await fetch(url+'/api/style/examples',{method:'DELETE'});
+
+  await page.getByLabel('Primary TeX file').selectOption('Course/other.tex');
+  await page.getByLabel('Primary TeX file').selectOption('Course/main.tex');
+  await page.locator('canvas[data-rendered=true]').first().waitFor();
+  // Return to the first PDF page for independent scrolling checks below.
+  await page.locator('.pdf-pages').evaluate(el=>{el.scrollTop=0;});
   await page.getByLabel('Codex request').fill('Keep this draft.');
   await page.getByRole('button',{name:'Expand chat history'}).click();
   const resize=page.getByRole('separator',{name:'Resize chat history'});
@@ -105,10 +167,12 @@ try {
   assert.equal((await req('/compile',{path:doc.path,revision:broken.data.revision})).status,500);
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam_solutions.pdf')),goodPDF);
   assert.equal((await req('/document',{path:doc.path,revision:doc.revision,text:'lost'},'PUT')).status,409);
+  assert.equal((await req('/inverse-search',{path:doc.path,revision:doc.revision,page:1,x:140,y:135})).status,409,'Stale source mappings are rejected');
+  assert.equal((await req('/inverse-search',{path:doc.path,revision:doc.revision,page:0,x:0,y:0})).status,400);
   assert.equal((await fetch(url+'/api/directory?path=..')).status,403);
   assert.equal((await fetch(url+'/api/new-document',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({directory:'Import',name:'bad.tex'})})).status,403);
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('Passed: directory selection, primary file switching, autosave, style memory, PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
+  console.log('Passed: inverse search (PDF click, source selection, included sources, stale-map rejection), directory selection, primary file switching, autosave, style memory, PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
 }catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}

@@ -3,7 +3,7 @@ import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 GlobalWorkerOptions.workerSrc = workerURL;
 
-function PdfPage({ document, number, width, scrollRoot }) {
+function PdfPage({ document, number, width, scrollRoot, onSourceClick }) {
   const container = useRef(null), canvas = useRef(null);
   const [page, setPage] = useState(null), [visible, setVisible] = useState(false), [error, setError] = useState('');
   useEffect(() => {
@@ -32,12 +32,18 @@ function PdfPage({ document, number, width, scrollRoot }) {
   }, [page, visible, width]);
   const viewport = page?.getViewport({ scale: 1 });
   return <div className="pdf-page" ref={container} style={{ width, height: width * (viewport ? viewport.height / viewport.width : 1.294) }}>
-    <canvas ref={canvas} role="img" aria-label={`PDF page ${number}`}/>
+    <canvas ref={canvas} title="Click to jump to LaTeX source" onClick={event=>{
+      if(!page || !onSourceClick)return;
+      const bounds=event.currentTarget.getBoundingClientRect();
+      const view=page.getViewport({scale:1});
+      const [x,y]=view.convertToPdfPoint((event.clientX-bounds.left)*view.width/bounds.width,(event.clientY-bounds.top)*view.height/bounds.height);
+      onSourceClick({page:number,x,y:page.view[3]-y});
+    }} role="img" aria-label={`PDF page ${number}`}/>
     {error && <div className="pdf-error">{error}</div>}
   </div>;
 }
 
-export default function PdfPreview({ url }) {
+export default function PdfPreview({ url, onSourceClick }) {
   const root = useRef(null);
   const [document, setDocument] = useState(null), [width, setWidth] = useState(0), [error, setError] = useState('');
   useEffect(() => {
@@ -54,6 +60,6 @@ export default function PdfPreview({ url }) {
   }, [url]);
   return <div className="pdf-pages" ref={root} role="region" aria-label="Compiled PDF" data-url={url}>
     {error ? <div className="pdf-error">Could not display PDF: {error}</div> : document ?
-      Array.from({ length: document.numPages }, (_, i) => <PdfPage key={i} document={document} number={i + 1} width={width} scrollRoot={root}/>) : <div className="empty">Loading PDF…</div>}
+      Array.from({ length: document.numPages }, (_, i) => <PdfPage key={i} document={document} number={i + 1} width={width} scrollRoot={root} onSourceClick={onSourceClick}/>) : <div className="empty">Loading PDF…</div>}
   </div>;
 }

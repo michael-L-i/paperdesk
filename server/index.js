@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { Workspace, atomicWrite, httpError } from './workspace.js';
 import { run } from './process.js';
 import { askAI } from './ai.js';
+import { gunzipSync } from 'node:zlib';
+import { parseSourceMap, inverseSearch } from './synctex.js';
+import { hash } from './workspace.js';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = path.resolve(process.env.WORKSPACE_ROOT || path.join(appDir, '..'));
 const workspace = new Workspace(root, appDir);
@@ -162,14 +165,55 @@ app.post('/api/compile', async (req, res) => {
     const file = await workspace.resolve(relative);
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'paperdesk-build-'));
     try {
-      const log = await run('tectonic', ['--untrusted', '--keep-logs', '--outdir', temp, file], { cwd: path.dirname(file), timeout: 180000 });
+      const log = await run('tectonic', ['--untrusted', '--synctex', '--keep-logs', '--outdir', temp, file], { cwd: path.dirname(file), timeout: 180000 });
       const output = file.replace(/\.tex$/, '.pdf');
       await workspace.resolve(path.relative(root, output), false);
       const compiled = await fs.readFile(path.join(temp, path.basename(output)));
+      const rawSync = gunzipSync(await fs.readFile(path.join(temp,path.basename(file,'.tex')+'.synctex.gz'))).toString('utf8');
+      const sourceMap = parseSourceMap(rawSync);
+      const inputs = {};
+      for (const input of sourceMap.files) {
+        try {
+          const resolved = await workspace.resolve(path.resolve(path.dirname(file),input));
+          if (!resolved.endsWith('.tex')) continue;
+          const name = path.relative(root,resolved);
+          inputs[name] = hash(await fs.readFile(resolved));
+        } catch { /* Package inputs outside the workspace are not editable. */ }
+      }
+      if ((await workspace.read(relative)).revision !== doc.revision) throw httpError('Source changed during compilation. Compile again.',409);
+      sourceMap.records = sourceMap.records.map(r=>({...r,path:path.relative(root,path.resolve(path.dirname(file),r.path))})).filter(r=>inputs[r.path]);
+      const metadata = { revision:doc.revision, pdfHash:hash(compiled), inputs, records:sourceMap.records };
+      const mapDir = await workspace.resolve(path.relative(root,path.join(path.dirname(file),'.paperdesk','sync')),false);
+      await fs.mkdir(mapDir,{recursive:true});
       await atomicWrite(output, compiled);
+      await atomicWrite(path.join(mapDir,path.basename(file)+'.json'),JSON.stringify(metadata));
       return { pdf: path.relative(root, output), revision: doc.revision, log: log.stdout + log.stderr };
     } finally { await fs.rm(temp, { recursive: true, force: true }); }
   }); res.json(result);
+});
+app.post('/api/inverse-search', async (req,res) => {
+  const { path: primary, revision, page, x, y } = req.body;
+  if (!Number.isInteger(page) || page<1 || !Number.isFinite(x) || !Number.isFinite(y) || x<0 || y<0) throw httpError('Invalid PDF location.');
+  const result = await workspace.exclusive(primary,async()=>{
+    const doc=await workspace.read(primary);
+    const file=await workspace.resolve(primary);
+    const mapFile=await workspace.resolve(path.relative(root,path.join(path.dirname(file),'.paperdesk','sync',path.basename(file)+'.json')),false);
+    let map;
+    try { map=JSON.parse(await fs.readFile(mapFile,'utf8')); }
+    catch(e) { if(e.code==='ENOENT')throw httpError('Compile once to enable PDF-to-source navigation.',409);throw e; }
+    if(map.revision!==revision || doc.revision!==map.revision)throw httpError('The preview is out of date. Compile again before jumping to source.',409);
+    const output=await workspace.resolve(primary.replace(/\.tex$/,'.pdf'));
+    if(hash(await fs.readFile(output))!==map.pdfHash)throw httpError('The PDF changed. Compile again before jumping to source.',409);
+    for(const [input,expected] of Object.entries(map.inputs)) {
+      const inputFile=await workspace.resolve(input);
+      if(hash(await fs.readFile(inputFile))!==expected)throw httpError('A source file changed. Compile again before jumping to source.',409);
+    }
+    const match=inverseSearch(map.records,page,x,y);
+    if(!match)throw httpError('No source location on this page.',404);
+    await workspace.resolve(match.path);
+    return {path:match.path,line:match.line};
+  });
+  res.json(result);
 });
 app.get('/api/history', async (req, res) => {
   const file = await workspace.resolve(req.query.path);

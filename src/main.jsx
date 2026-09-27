@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import CodeMirror from '@uiw/react-codemirror';
+import { EditorView } from '@codemirror/view';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, FilePlus, Download, MoreHorizontal } from 'lucide-react';
@@ -24,17 +25,18 @@ function App() {
   const historyDrag=useRef(null);
   const [job,setJob]=useState(null), [starting,setStarting]=useState(false), [messages,setMessages]=useState([]);
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
-  const state=useRef({doc:null,text:'',dir:null}), saves=useRef(Promise.resolve()), building=useRef(false);
+  const editorView=useRef(null), primaryFile=useRef(null);
+  const state=useRef({doc:null,text:'',dir:null}), saves=useRef(Promise.resolve()), building=useRef(false), attemptedBuild=useRef('');
   state.current={doc,text,dir};
   const aiBusy=!!job || starting;
   const fail=e=>setError(e.message);
   const draftKey=file=>'paperdesk:draft:'+state.current.dir?.root+':'+file;
-  function accept(next, recover=false) {
+  function accept(next, recover=false, makePrimary=true) {
     const draft=recover ? localStorage.getItem(draftKey(next.path)) : null;
     const value=draft ?? next.text;
     state.current.doc=next; state.current.text=value;
     setDoc(next);setText(value);setStatus(value===next.text?'Saved':'Unsaved');
-    localStorage.setItem('paperdesk:primary',next.path);
+    if(makePrimary){attemptedBuild.current='';primaryFile.current=next.path;localStorage.setItem('paperdesk:primary',next.path);}
   }
   function change(value) {
     state.current.text=value;setText(value);setStatus('Unsaved');
@@ -81,7 +83,7 @@ function App() {
     setBusy(true);
     try {
       await save();setDir(directory);state.current.dir=directory;
-      setDoc(null);setText('');state.current.doc=null;state.current.text='';setPdf(null);setSource('');setStatus('');setMessages([]);
+      setDoc(null);setText('');primaryFile.current=null;state.current.doc=null;state.current.text='';setPdf(null);setSource('');setStatus('');setMessages([]);
       localStorage.setItem('paperdesk:directory',directory.path);
       const files=directory.entries.filter(e=>!e.directory && e.name.endsWith('.tex'));
       const file=files.find(e=>e.path===localStorage.getItem('paperdesk:primary')) || files.find(e=>e.name==='main.tex') || files[0];
@@ -104,19 +106,44 @@ function App() {
     if(!doc || text===doc.text || status==='Save failed' || aiBusy) return;
     const timer=setTimeout(()=>save().catch(fail),700);return()=>clearTimeout(timer);
   },[doc,text,status,aiBusy]);
+  async function jumpToSource(location) {
+    if(!pdf || aiBusy)return;
+    const snapshot=state.current;
+    if(snapshot.text!==snapshot.doc?.text || pdf.editorPath!==snapshot.doc?.path || pdf.editorRevision!==snapshot.doc?.revision){setError('The preview is out of date. Wait for compilation or click Compile before jumping to source.');return;}
+    try {
+      const match=await api('/inverse-search',{path:pdf.path.replace(/\.pdf$/,'.tex'),revision:pdf.revision,...location});
+      if(state.current.doc!==snapshot.doc || state.current.text!==snapshot.text)return;
+      if(match.path!==snapshot.doc.path){
+        const next=await api('/document?path='+encodeURIComponent(match.path));
+        if(state.current.doc!==snapshot.doc || state.current.text!==snapshot.text)return;
+        accept(next,false,false);
+        setPdf(p=>({...p,editorPath:next.path,editorRevision:next.revision}));
+      }
+      requestAnimationFrame(()=>{
+        const view=editorView.current;
+        if(!view)return;
+        const line=view.state.doc.line(Math.max(1,Math.min(match.line,view.state.doc.lines)));
+        view.dispatch({selection:{anchor:line.from,head:line.to},effects:EditorView.scrollIntoView(line.from,{y:'center'})});
+        view.focus();setError('');
+      });
+    }catch(e){fail(e);}
+  }
   async function compile() {
     if(building.current || !state.current.doc) return;
+    attemptedBuild.current=state.current.doc.path+':'+state.current.doc.revision;
     building.current=true;setCompiling(true);
     try {
       const saved=await save();
-      const result=await api('/compile',{path:saved.path,revision:saved.revision});
-      if(state.current.doc?.path===saved.path) setPdf({path:result.pdf,version:Date.now(),revision:result.revision});
+      const primary=primaryFile.current===saved.path?saved:await api('/document?path='+encodeURIComponent(primaryFile.current));
+      const result=await api('/compile',{path:primary.path,revision:primary.revision});
+      if(primaryFile.current===primary.path) setPdf({path:result.pdf,version:Date.now(),revision:result.revision,editorPath:saved.path,editorRevision:saved.revision});
     }catch(e){fail(e);}finally{building.current=false;setCompiling(false);}
   }
   useEffect(()=>{
-    if(!doc || status!=='Saved' || aiBusy || compiling || pdf?.revision===doc.revision) return;
+    if(!doc || status!=='Saved' || aiBusy || compiling || (pdf?.editorPath===doc.path&&pdf?.editorRevision===doc.revision)) return;
+    if(attemptedBuild.current===doc.path+':'+doc.revision)return;
     const timer=setTimeout(compile,700);return()=>clearTimeout(timer);
-  },[doc?.path,doc?.revision,status,aiBusy]);
+  },[doc?.path,doc?.revision,status,aiBusy,compiling]);
   useEffect(()=>{
     const key=e=>{
       if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();save().catch(fail);}
@@ -131,7 +158,8 @@ function App() {
     setStarting(true);setError('');
     try {
       const saved=await save();
-      const request=await api('/task',{directory:dir.path,path:saved?.path,revision:saved?.revision,source,instruction:prompt});
+      const primary=saved&&primaryFile.current!==saved.path?await api('/document?path='+encodeURIComponent(primaryFile.current)):saved;
+      const request=await api('/task',{directory:dir.path,path:primary?.path,revision:primary?.revision,source,instruction:prompt});
       const pending={id:request.id,directory:dir.path};
       setMessages(m=>[...m,{role:'You',text:prompt}]);setPrompt('');setJob(pending);
       sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));
@@ -176,7 +204,7 @@ function App() {
     <header>
       <button className="directory" disabled={aiBusy||busy} onClick={chooseNativeDirectory} title={dir ? dir.root+'/'+dir.path : 'Choose directory'}><FolderOpen size={16}/>{busy ? 'Choosing…' : dir ? dir.path||dir.root.split('/').at(-1) : 'Choose directory'}</button>
       <span className="separator"/>
-      <select aria-label="Primary TeX file" disabled={!texFiles.length||aiBusy} value={doc?.path||''} onChange={e=>openFile(e.target.value).catch(fail)}>{!doc&&<option value="">No .tex file</option>}{texFiles.map(e=><option key={e.path} value={e.path}>{e.name}</option>)}</select>
+      <select aria-label="Primary TeX file" disabled={!texFiles.length||aiBusy} value={primaryFile.current||''} onChange={e=>openFile(e.target.value).catch(fail)}>{!doc&&<option value="">No .tex file</option>}{texFiles.map(e=><option key={e.path} value={e.path}>{e.name}</option>)}</select>
       <button title="New TeX file" aria-label="New TeX file" disabled={!dir||aiBusy} onClick={()=>{setNewName('main.tex');setDialog('new');}}><FilePlus size={15}/></button>
       <span className="status">{status}</span>
       <div className="spacer"/>
@@ -186,10 +214,10 @@ function App() {
     </header>
     {error&&<div className="error" role="alert"><details><summary>{error.split('\n')[0].slice(0,180)}</summary><pre>{error}</pre></details>{status==='Save failed'&&<><button onClick={downloadDraft}>Download draft</button><button onClick={reloadDisk}>Use disk version</button></>}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
     <main>
-      <section className="left"><div className="panel-title">{doc?.path.split('/').at(-1)||'LaTeX'}</div><div className="editor">{doc?<CodeMirror className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{dir?'Select a .tex file or ask Codex to create one.':'Choose a directory.'}</div>}</div>
+      <section className="left"><div className="panel-title">{doc?.path.split('/').at(-1)||'LaTeX'}</div><div className="editor">{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{dir?'Select a .tex file or ask Codex to create one.':'Choose a directory.'}</div>}</div>
       <section className="codex">{historyOpen&&<div className="chat-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onPointerUp={()=>{historyDrag.current=null;}} onPointerCancel={()=>{historyDrag.current=null;}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/> }<div className="codex-title"><span>Codex</span><span className="status">{aiBusy?'Working…':''}</span><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(!historyOpen)}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>{historyOpen&&<div className="messages" style={{height:historyHeight}}>{!messages.length&&<span className="muted">No messages yet.</span>}{messages.map((m,i)=><div key={i}><strong>{m.role}</strong><p>{m.text}</p></div>)}</div>}<textarea aria-label="Codex request" placeholder="Ask Codex to edit or create a file, or convert a PDF…" disabled={!dir||aiBusy} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();send();}}}/><div className="codex-actions"><select aria-label="Attach PDF" value={source} disabled={aiBusy||!dir} onChange={e=>setSource(e.target.value)}><option value="">Attach PDF…</option>{pdfFiles.map(f=><option key={f.path} value={f.path}>{f.name}</option>)}</select><div className="spacer"/><button className="send" aria-label="Send to Codex" disabled={!prompt.trim()||!dir||aiBusy} onClick={send}><ArrowUp size={16}/></button></div></section>
       </section>
-      <section className="right"><div className="panel-title"><span>PDF</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&pdf.revision!==doc?.revision?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview url={fileURL(pdf.path,pdf.version)}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
+      <section className="right"><div className="panel-title"><span>PDF</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
     </main>
     {dialog&&<div className="backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label={dialog==='new'?'New file':dialog==='style'?'Writing style':'History'}><div className="dialog-title"><strong>{dialog==='new'?'New file':dialog==='style'?'Writing style':'History'}</strong><button aria-label="Close dialog" onClick={()=>setDialog(null)}><X size={16}/></button></div>
     {dialog==='new'&&<form onSubmit={e=>{e.preventDefault();createFile();}}><input autoFocus aria-label="Filename" value={newName} onChange={e=>setNewName(e.target.value)}/><div className="dialog-bottom"><div className="spacer"/><button className="primary" type="submit">Create</button></div></form>}
