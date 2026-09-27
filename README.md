@@ -17,7 +17,7 @@ Open http://localhost:4317.
 3. Use the Codex panel for edits, questions, or larger tasks. To convert a PDF, attach it and ask Codex to convert it. You can also name the PDF in your request. A directory with only a PDF needs no setup first.
 4. Codex saves its output, selects the resulting `.tex` file, and compiles it automatically. The editor pauses during a Codex request to prevent conflicting edits.
 
-Click a location on the compiled PDF to jump to and select the corresponding LaTeX line (SyncTeX inverse search). Included `.tex` files open in the editor while the main file remains the compilation target. Recompile once after upgrading to create the source map. Stale previews must finish compiling before source navigation; mapping is to the nearest source line or paragraph, not an exact character.
+Drag over PDF text to select it and use ⌘/Ctrl C to copy. Double-click a location on the compiled PDF to jump to and select the corresponding LaTeX line (SyncTeX inverse search). Included `.tex` files open in the editor while the main file remains the compilation target. Recompile once after upgrading to create the source map. Stale previews must finish compiling before source navigation; mapping is to the nearest source line or paragraph, not an exact character.
 
 Edits autosave. Compilation runs automatically after saving; **Compile** also runs it manually (⌘/Ctrl Enter). A failed build preserves the previous PDF. Use the file selector to change the primary file. The directory and primary file are remembered on reload.
 

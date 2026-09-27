@@ -65,14 +65,36 @@ try {
     await canvas.scrollIntoViewIfNeeded();
     await page.waitForFunction(n=>document.querySelectorAll('.pdf-page canvas')[n-1]?.dataset.rendered==='true',pageNumber);
     const box=await canvas.boundingBox();
+    await page.locator('.pdf-page').nth(pageNumber-1).locator('.pdf-text-layer[data-rendered=true]').waitFor();
     const response=page.waitForResponse(r=>r.url().includes('/api/inverse-search'));
-    await canvas.click({position:{x:(+match[1]+ +match[3])/2/+pageXML[1]*box.width,y:(+match[2]+ +match[4])/2/+pageXML[2]*box.height}});
+    await page.locator('.pdf-page').nth(pageNumber-1).dblclick({position:{x:(+match[1]+ +match[3])/2/+pageXML[1]*box.width,y:(+match[2]+ +match[4])/2/+pageXML[2]*box.height}});
     const result=await response;
     assert.equal(result.status(),200,await result.text());
     await page.waitForFunction(()=>document.activeElement?.classList.contains('cm-content'));
     return result.json();
   }
+  let inverseRequests=0;
+  page.on('request',r=>{if(r.url().includes('/api/inverse-search'))inverseRequests++;});
+  const selectable=page.locator('.pdf-page').nth(1).locator('.pdf-text-layer span').filter({hasText:'Second target paragraph.'});
+  await selectable.scrollIntoViewIfNeeded();
+  await selectable.click();
+  assert.equal(inverseRequests,0,'Single clicks must not jump to source');
+  const selectionBounds=await selectable.boundingBox();
+  await page.mouse.move(selectionBounds.x+1,selectionBounds.y+selectionBounds.height/2);
+  await page.mouse.down();
+  await page.mouse.move(selectionBounds.x+selectionBounds.width-1,selectionBounds.y+selectionBounds.height/2,{steps:12});
+  await page.mouse.up();
+  const selectedPDFText=await page.evaluate(()=>window.getSelection().toString());
+  assert.match(selectedPDFText,/Second target paragraph/);
+  assert.equal(inverseRequests,0,'Dragging must not jump to source');
+  await page.context().grantPermissions(['clipboard-read','clipboard-write']);
+  const previousClipboard=await page.evaluate(()=>navigator.clipboard.readText());
+  try {
+    await page.keyboard.press('Meta+c');
+    assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),selectedPDFText);
+  } finally {await page.evaluate(text=>navigator.clipboard.writeText(text),previousClipboard);}
   const firstJump=await clickPDFWord(2,'Second');
+  assert.equal(inverseRequests,1,'Double-click jumps once');
   assert.equal(firstJump.path,'Course/main.tex');
   assert.ok(firstJump.line===7||firstJump.line===8);
   // Selected text must be the actual source line in CodeMirror, not just an API result.
@@ -173,6 +195,6 @@ try {
   assert.equal((await fetch(url+'/api/new-document',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({directory:'Import',name:'bad.tex'})})).status,403);
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('Passed: inverse search (PDF click, source selection, included sources, stale-map rejection), directory selection, primary file switching, autosave, style memory, PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
+  console.log('Passed: PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), directory selection, primary file switching, autosave, style memory, PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
 }catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}
