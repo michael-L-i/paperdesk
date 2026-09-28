@@ -7,7 +7,7 @@ import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, FilePlus, Download, MoreHorizontal } from 'lucide-react';
 import './style.css';
 import PdfPreview from './PdfPreview.jsx';
-const extensions = [StreamLanguage.define(stex)];
+const extensions = [StreamLanguage.define(stex), EditorView.lineWrapping];
 async function api(url, body, method = 'POST') {
   const res = await fetch('/api' + url, body === undefined ? {} : { method, headers: {'Content-Type':'application/json'}, body:JSON.stringify(body) });
   const result = await res.json();
