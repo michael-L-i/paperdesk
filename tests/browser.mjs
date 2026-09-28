@@ -60,6 +60,27 @@ try {
   assert.equal(await page.getByLabel('Download PDF').count(),1);
   assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/main.tex');
 
+  // Select only part of the active source line: its background must not hide the highlight.
+  const sourceLine=page.locator('.cm-line').filter({hasText:'Second target paragraph.'});
+  const sourceBounds=await sourceLine.evaluate(el=>{
+    const range=document.createRange();range.selectNodeContents(el);
+    const box=range.getBoundingClientRect();return {x:box.x,y:box.y,height:box.height};
+  });
+  await page.mouse.move(sourceBounds.x+2,sourceBounds.y+sourceBounds.height/2);
+  await page.mouse.down();
+  await page.mouse.move(sourceBounds.x+95,sourceBounds.y+sourceBounds.height/2,{steps:12});
+  await page.mouse.up();
+  const sourceSelection=await page.evaluate(()=>window.getSelection().toString());
+  assert.ok(sourceSelection.length>3 && !sourceSelection.includes('\n') && sourceSelection.length<'Second target paragraph.'.length);
+  await page.waitForFunction(()=>[...document.querySelectorAll('.cm-selectionBackground')].some(el=>el.getBoundingClientRect().width>50));
+  const selectionPaint=await page.evaluate(()=>({
+    highlight:getComputedStyle(document.querySelector('.cm-selectionBackground')).backgroundColor,
+    activeLine:getComputedStyle(document.querySelector('.cm-activeLine')).backgroundColor,
+  }));
+  assert.equal(selectionPaint.highlight,'rgb(181, 213, 255)');
+  assert.match(selectionPaint.activeLine,/rgba\(.+, 0\.04\)/,'Active line must allow the selection underneath to show');
+  await page.screenshot({path:'/tmp/paperdesk-inline-selection.png'});
+
   const bbox=(await run('pdftotext',['-bbox',path.join(root,'Course/main.pdf'),'-'])).stdout;
   async function clickPDFWord(pageNumber,word){
     const pageXML=[...bbox.matchAll(/<page width="([\d.]+)" height="([\d.]+)">([\s\S]*?)<\/page>/g)][pageNumber-1];
