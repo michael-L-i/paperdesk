@@ -17,10 +17,15 @@
     "@codemirror/view": "^6.43.13",
     "@uiw/react-codemirror": "^4.23.0",
     "express": "^5.1.0",
+    "katex": "^0.16.47",
     "lucide-react": "^0.468.0",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "synctex-js": "^1.0.0"
   },
   "devDependencies": {

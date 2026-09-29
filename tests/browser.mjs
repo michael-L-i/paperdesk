@@ -42,7 +42,7 @@ for(const ext of ['tex','aux','log'])await fs.unlink(path.join(root,'Import/exam
 const originalPDF=await fs.readFile(path.join(root,'Import/exam.pdf'));
 // Deterministic model fixture; PDF extraction/rendering, API jobs, application, and compilation remain real.
 const fake=path.join(root,'fake-codex.mjs');
-await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconsole.log(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'/bin/zsh -lc "pdftotext -layout exam.pdf -"'}}));\nawait new Promise(r=>setTimeout(r,2500));\nconst result={message:'Converted exam.pdf.',latex:${JSON.stringify(latex)},style:'',filename:'exam_solutions.tex'};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
+await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconsole.log(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'/bin/zsh -lc "pdftotext -layout exam.pdf -"'}}));\nawait new Promise(r=>setTimeout(r,2500));\nconst result={message:'Converted **exam.pdf**: solve $2x+3=11$.',latex:${JSON.stringify(latex)},style:'',filename:'exam_solutions.tex'};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
 await fs.chmod(fake,0o755);
 const server=spawn(process.execPath,['server/index.js'],{cwd:app,env:{...process.env,NODE_ENV:'production',WORKSPACE_ROOT:root,PAPERDESK_DATA_DIR:path.join(root,'.app-data'),PORT:String(port),CODEX_BIN:fake},stdio:'pipe'});
 let browser,page;
@@ -274,7 +274,10 @@ try {
   await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='Import/exam_solutions.tex',{},{timeout:60000});
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('exam_solutions.pdf'),{},{timeout:180000});
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam.pdf')),originalPDF);
-  await page.locator('.message:not(.user)').filter({hasText:'Converted exam.pdf.'}).waitFor();
+  const reply=page.locator('.message:not(.user) .markdown').filter({hasText:'Converted exam.pdf'});
+  await reply.waitFor();
+  assert.equal(await reply.locator('strong').textContent(),'exam.pdf','Replies render Markdown');
+  assert.equal(await reply.locator('.katex').count(),1,'Replies render math');
   assert.equal(await page.getByRole('button',{name:'Collapse chat history'}).count(),1,'Sending opens the thread');
   const codexCall=JSON.parse(await fs.readFile(path.join(root,'codex-call.json'),'utf8'));
   assert.ok(codexCall.args.includes('workspace-write'),'The agent can only write in its scratch directory');

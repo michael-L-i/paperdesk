@@ -35,9 +35,27 @@
 .resizing .thread{transition:none}
 .thread-inner{min-height:100%;display:flex;flex-direction:column;gap:14px;padding:2px 13px 14px}
 .thread-empty{margin:auto;color:#aaa;font-size:12px;text-align:center}
-.message p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.55}
 .message.user{align-self:flex-end;max-width:85%;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
-.message.user p{padding:7px 12px;border-radius:16px;background:#f1f1f1}
+.message.user p{margin:0;padding:7px 12px;border-radius:16px;background:#f1f1f1;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.55}
+.markdown{font-size:13px;line-height:1.6;overflow-wrap:break-word}
+.markdown>:first-child{margin-top:0}.markdown>:last-child{margin-bottom:0}
+.markdown :is(p,ul,ol,pre,blockquote,.table-wrap){margin:0 0 10px}
+.markdown :is(h1,h2,h3,h4,h5,h6){margin:16px 0 6px;font-size:13px;font-weight:600;line-height:1.4}
+.markdown h1{font-size:16px}.markdown h2{font-size:15px}.markdown h3{font-size:14px}
+.markdown :is(ul,ol){padding-left:22px}
+.markdown li{margin:3px 0}.markdown li>p{margin:0}
+.markdown strong{font-weight:600}
+.markdown a{display:inline;color:#2563eb;text-decoration:underline;text-underline-offset:2px}
+.markdown code{padding:1px 4px;border-radius:4px;background:#f1f1f1;font-family:'SFMono-Regular',Consolas,monospace;font-size:12px}
+.markdown pre{overflow-x:auto;padding:10px 12px;border:1px solid #ececec;border-radius:8px;background:#f8f8f8}
+.markdown pre code{padding:0;background:none;line-height:1.5}
+.markdown blockquote{padding-left:12px;border-left:3px solid #e2e2e2;color:#666}
+.markdown hr{margin:14px 0;border:0;border-top:1px solid #e8e8e8}
+.table-wrap{overflow-x:auto}
+.markdown table{width:100%;border-collapse:collapse;font-size:12.5px}
+.markdown :is(th,td){padding:6px 10px;border-bottom:1px solid #e8e8e8;text-align:left;vertical-align:top}
+.markdown th{font-weight:600;border-bottom-color:#d6d6d6}
+.markdown .katex-display{margin:8px 0;overflow-x:auto;overflow-y:hidden}
 .message-files{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}
 .thinking{display:flex;align-items:center;gap:9px;padding:4px 0;color:#999;font-size:12px}
 .dots{display:flex;gap:4px}

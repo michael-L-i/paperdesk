@@ -5,9 +5,19 @@ import { EditorView } from '@codemirror/view';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
 import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image } from 'lucide-react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import './style.css';
 import PdfPreview from './PdfPreview.jsx';
 const extensions = [StreamLanguage.define(stex), EditorView.lineWrapping];
+// Agent replies render like ChatGPT: GitHub Markdown with KaTeX math.
+const markdown = { remarkPlugins: [remarkGfm, remarkMath], rehypePlugins: [rehypeKatex], components: {
+  a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer"/>,
+  table: ({ node, ...props }) => <div className="table-wrap"><table {...props}/></div>,
+} };
 async function api(url, body, method = 'POST') {
   const res = await fetch('/api' + url, body === undefined ? {} : { method, headers: {'Content-Type':'application/json'}, body:JSON.stringify(body) });
   const result = await res.json();
@@ -250,7 +260,7 @@ function App() {
         <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
         <div className="thread" ref={thread} style={{height:historyOpen?historyHeight:0}} inert={!historyOpen}><div className="thread-inner">
           {!messages.length&&!aiBusy&&<p className="thread-empty">Ask about anything in this folder, request an edit, or attach a file.</p>}
-          {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{f.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}<p>{m.text}</p></div>)}
+          {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{f.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}{m.role==='You'?<p>{m.text}</p>:<div className="markdown"><Markdown {...markdown}>{m.text}</Markdown></div>}</div>)}
           {aiBusy&&<div className="thinking" role="status" aria-label="Agent is working"><span className="dots"><i/><i/><i/></span>{activity}</div>}
         </div></div>
         <div className="composer" onClick={e=>{if(e.target===e.currentTarget)composer.current?.focus();}}>
