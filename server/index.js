@@ -10,11 +10,13 @@ import { askAI } from './ai.js';
 import { gunzipSync } from 'node:zlib';
 import { parseSourceMap, inverseSearch } from './synctex.js';
 import { hash } from './workspace.js';
+import { Uploads } from './uploads.js';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = path.resolve(process.env.WORKSPACE_ROOT || path.join(appDir, '..'));
 const workspace = new Workspace(root, appDir);
 const dataDir = path.resolve(process.env.PAPERDESK_DATA_DIR || path.join(appDir, '.data'));
 await fs.mkdir(dataDir, { recursive: true });
+const uploads = await new Uploads(path.join(dataDir, 'uploads')).init();
 const app = express();
 const port = Number(process.env.PORT || 4317);
 const jobs = new Map();
@@ -77,10 +79,14 @@ app.post('/api/new-document', async (req, res) => {
   await fs.writeFile(file, template, { flag:'wx' }).catch(e => { if(e.code==='EEXIST') throw httpError('That file already exists.',409); throw e; });
   res.json(await workspace.read(path.relative(root,file)));
 });
+app.post('/api/uploads', express.raw({ type: () => true, limit: '50mb' }), async (req, res) => res.json(await uploads.add(req.query.name || '', req.body)));
+app.delete('/api/uploads/:id', async (req, res) => { await uploads.remove(req.params.id); res.json({ ok: true }); });
 app.post('/api/task', async (req,res) => {
   if (aiBusy) throw httpError('The agent is already working.',409);
-  const { directory = '', instruction, path: primary, revision, source } = req.body;
+  const { directory = '', instruction, path: primary, revision, attachments: ids = [] } = req.body;
   if (typeof instruction !== 'string' || !instruction.trim() || instruction.length > 20000) throw httpError('Enter a request.');
+  if (!Array.isArray(ids) || ids.length > 10) throw httpError('Attach up to 10 files.');
+  const attachments = ids.map(id => uploads.get(id));
   const dir = await workspace.resolve(directory);
   const entries = await fs.readdir(dir, {withFileTypes:true});
   const names = entries.filter(e => e.isFile() && !e.name.startsWith('.')).map(e => e.name);
@@ -93,40 +99,38 @@ app.post('/api/task', async (req,res) => {
   }
   const doc = primary ? documents[primary] : null;
   if (primary && (!doc || doc.revision !== revision)) throw httpError('The primary file changed. Reload it before asking the agent.',409);
-  let pdf;
-  if (source) {
-    pdf = await workspace.resolve(source);
-    if (path.dirname(pdf) !== dir || !pdf.toLowerCase().endsWith('.pdf')) throw httpError('Choose a PDF in the selected directory.');
-  } else {
+  if (!attachments.length) {
     const mentioned = names.filter(n => n.toLowerCase().endsWith('.pdf') && instruction.toLowerCase().includes(n.toLowerCase()));
     const pdfs = names.filter(n => n.toLowerCase().endsWith('.pdf'));
     const candidate = mentioned[0] || (/\b(convert|transcribe|import)\b/i.test(instruction) && pdfs.length === 1 ? pdfs[0] : null);
-    if (candidate) pdf = await workspace.resolve(path.relative(root,path.join(dir,candidate)));
+    if (candidate) attachments.push({ name: candidate, kind: 'pdf', file: await workspace.resolve(path.relative(root,path.join(dir,candidate))) });
     else if (/\b(convert|transcribe|import)\b.*\bpdf\b/i.test(instruction) && pdfs.length !== 1) throw httpError('Select the PDF to convert.');
   }
   const style = await readStyle(), examples = await readJSON('examples.json', []);
   const id = crypto.randomUUID();
-  const job = { id, status:'running', directory, primary, documents, source: pdf, started:Date.now() };
+  const job = { id, status:'running', directory, primary, documents, attachments, started:Date.now() };
   for(const [key,old] of jobs) if(old.status!=='running' && Date.now()-old.started>3600000) jobs.delete(key);
   jobs.set(id,job); aiBusy=true;
   res.json({id});
-  const context = JSON.stringify({ directory, files:names, primary:doc ? path.basename(doc.path) : null, attachedPDF:pdf ? path.basename(pdf) : null,
+  const context = JSON.stringify({ directory, files:names, primary:doc ? path.basename(doc.path) : null, attachments:attachments.map(a => a.name),
     documents:Object.values(documents).slice(0,15).map(d => ({filename:path.basename(d.path),text:d.text.slice(0,12000)})) });
-  askAI({instruction, text:doc?.text || '',style,examples:examples.slice(-8),source:pdf,mode:'task',context})
+  askAI({instruction, text:doc?.text || '',style,examples:examples.slice(-8),attachments,mode:'task',context})
     .then(result => { job.result=result; job.status='done'; })
     .catch(e => { job.error=e.message; job.status='error'; })
-    .finally(() => { aiBusy=false; });
+    .finally(() => { aiBusy=false; for (const upload of ids) uploads.remove(upload).catch(() => {}); });
 });
 app.post('/api/tasks/:id/apply', async (req,res) => {
   const job=jobs.get(req.params.id);
   if (!job || job.status !== 'done') throw httpError('The agent result is not ready.',409);
   if (job.applied) return res.json(job.applied);
   if (!job.result.latex) return res.json({message:job.result.message});
-  const name=job.result.filename || (job.source ? path.basename(job.source,'.pdf')+'_solutions.tex' : job.primary ? path.basename(job.primary) : 'main.tex');
+  const pdf=job.attachments.find(a => a.kind === 'pdf');
+  const name=job.result.filename || (pdf ? path.basename(pdf.name,path.extname(pdf.name))+'_solutions.tex' : job.primary ? path.basename(job.primary) : 'main.tex');
   if (path.basename(name)!==name || !name.endsWith('.tex')) throw httpError('The agent returned an invalid filename.');
   const dir=await workspace.resolve(job.directory);
   const file=path.join(dir,name), relative=path.relative(root,file);
-  if (job.source && file.replace(/\.tex$/,'.pdf')===job.source) throw httpError('This filename would overwrite the original PDF. Ask the agent to use another filename.');
+  const output=file.replace(/\.tex$/,'.pdf');
+  if (job.attachments.some(a => a.name.toLowerCase() === path.basename(output).toLowerCase()) && await fs.stat(output).then(() => true, () => false)) throw httpError('This filename would overwrite the original PDF. Ask the agent to use another filename.');
   const prior=job.documents[relative];
   if(prior) job.applied=await workspace.save(relative,job.result.latex,prior.revision,'ai');
   else {
@@ -252,7 +256,7 @@ app.post('/api/ai', async (req, res) => {
     .catch(e => Object.assign(job, { status: 'error', error: e.message }))
     .finally(() => { aiBusy = false; });
 });
-app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {documents,source,...visible}=job; res.json(visible); });
+app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {documents,attachments,...visible}=job; res.json(visible); });
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(appDir, 'dist')));
   app.get('/{*path}', (req, res) => res.sendFile(path.join(appDir, 'dist/index.html')));

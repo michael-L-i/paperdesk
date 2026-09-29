@@ -9,7 +9,7 @@ const temp = await fs.mkdtemp(path.join(os.tmpdir(),'paperdesk-ai-check-'));
 try {
   await fs.writeFile(path.join(temp,'exam.tex'),String.raw`\documentclass{article}\usepackage{amsmath}\begin{document}\section*{Practice 1}\textbf{Problem 1.} Solve $2x+3=11$. Show your work.\end{document}`);
   await run('tectonic',['--untrusted',path.join(temp,'exam.tex')]);
-  const result = await askAI({instruction:'Convert this PDF to editable LaTeX with blank solution space.',text:'',selection:'',style:'',examples:[],mode:'task',context:JSON.stringify({files:['exam.pdf'],primary:null,attachedPDF:'exam.pdf'}),source:path.join(temp,'exam.pdf')});
+  const result = await askAI({instruction:'Convert this PDF to editable LaTeX with blank solution space.',text:'',selection:'',style:'',examples:[],mode:'task',context:JSON.stringify({files:['exam.pdf'],primary:null,attachments:['exam.pdf']}),source:path.join(temp,'exam.pdf')});
   assert.ok(result.filename.endsWith('.tex') && result.filename !== 'exam.tex', 'Must preserve the original exam.pdf');
   assert.match(result.latex,/\\begin\{document\}/);
   assert.match(result.latex,/2\s*x\s*\+\s*3/);

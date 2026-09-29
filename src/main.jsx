@@ -4,7 +4,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, FilePlus, Download, MoreHorizontal } from 'lucide-react';
+import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image } from 'lucide-react';
 import './style.css';
 import PdfPreview from './PdfPreview.jsx';
 const extensions = [StreamLanguage.define(stex), EditorView.lineWrapping];
@@ -21,12 +21,12 @@ function App() {
   const [autoCompile,setAutoCompile]=useState(()=>localStorage.getItem('paperdesk:autoCompile')!=='false');
   const [pdf,setPdf]=useState(null), [compiling,setCompiling]=useState(false), [error,setError]=useState('');
   const [dialog,setDialog]=useState(null), [newName,setNewName]=useState('main.tex'), [busy,setBusy]=useState(false);
-  const [historyOpen,setHistoryOpen]=useState(false), [prompt,setPrompt]=useState(''), [source,setSource]=useState('');
+  const [historyOpen,setHistoryOpen]=useState(false), [prompt,setPrompt]=useState(''), [attachments,setAttachments]=useState([]);
   const [historyHeight,setHistoryHeight]=useState(180);
   const historyDrag=useRef(null);
   const [job,setJob]=useState(null), [starting,setStarting]=useState(false), [messages,setMessages]=useState([]);
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
-  const editorView=useRef(null), primaryFile=useRef(null);
+  const editorView=useRef(null), primaryFile=useRef(null), fileInput=useRef(null);
   const state=useRef({doc:null,text:'',dir:null}), saves=useRef(Promise.resolve()), building=useRef(false), attemptedBuild=useRef('');
   state.current={doc,text,dir};
   const aiBusy=!!job || starting;
@@ -84,7 +84,7 @@ function App() {
     setBusy(true);
     try {
       await save();setDir(directory);state.current.dir=directory;
-      setDoc(null);setText('');primaryFile.current=null;state.current.doc=null;state.current.text='';setPdf(null);setSource('');setStatus('');setMessages([]);
+      setDoc(null);setText('');primaryFile.current=null;state.current.doc=null;state.current.text='';setPdf(null);setStatus('');setMessages([]);
       localStorage.setItem('paperdesk:directory',directory.path);
       const files=directory.entries.filter(e=>!e.directory && e.name.endsWith('.tex'));
       const file=files.find(e=>e.path===localStorage.getItem('paperdesk:primary')) || files.find(e=>e.name==='main.tex') || files[0];
@@ -155,15 +155,30 @@ function App() {
     window.addEventListener('keydown',key);window.addEventListener('beforeunload',leave);
     return()=>{window.removeEventListener('keydown',key);window.removeEventListener('beforeunload',leave);};
   });
+  // Files upload as soon as they are attached; each request sends their IDs.
+  function attach(files) {
+    for(const file of files){
+      const key=crypto.randomUUID();
+      setAttachments(a=>[...a,{key,name:file.name}]);
+      fetch('/api/uploads?name='+encodeURIComponent(file.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file})
+        .then(async res=>{const result=await res.json();if(!res.ok)throw new Error(result.error||'Upload failed.');setAttachments(a=>a.map(x=>x.key===key?{...x,...result}:x));})
+        .catch(e=>{setAttachments(a=>a.filter(x=>x.key!==key));fail(e);});
+    }
+  }
+  function detach(item) {
+    setAttachments(a=>a.filter(x=>x.key!==item.key));
+    if(item.id) api('/uploads/'+item.id,{},'DELETE').catch(()=>{});
+  }
+  const uploading=attachments.some(a=>!a.id);
   async function send() {
-    if(!dir || !prompt.trim() || aiBusy)return;
+    if(!dir || !prompt.trim() || aiBusy || uploading)return;
     setStarting(true);setError('');
     try {
       const saved=await save();
       const primary=saved&&primaryFile.current!==saved.path?await api('/document?path='+encodeURIComponent(primaryFile.current)):saved;
-      const request=await api('/task',{directory:dir.path,path:primary?.path,revision:primary?.revision,source,instruction:prompt});
+      const request=await api('/task',{directory:dir.path,path:primary?.path,revision:primary?.revision,attachments:attachments.map(a=>a.id),instruction:prompt});
       const pending={id:request.id,directory:dir.path};
-      setMessages(m=>[...m,{role:'You',text:prompt}]);setPrompt('');setJob(pending);
+      setMessages(m=>[...m,{role:'You',text:prompt,files:attachments.map(a=>a.name)}]);setPrompt('');setAttachments([]);setJob(pending);
       sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));
     }catch(e){fail(e);}finally{setStarting(false);}
   }
@@ -190,7 +205,7 @@ function App() {
             if(state.current.dir?.path===job.directory){accept(next);await refreshDirectory();setPdf(previous=>previous?.path===next.path.replace(/\.tex$/,'.pdf')?previous:null);}
           }
           if(result.result.style){setStyle(result.result.style);setDialog('style');}
-          setMessages(m=>[...m,{role:'Agent',text:result.result.message}]);setJob(null);setSource('');sessionStorage.removeItem('paperdesk:task');
+          setMessages(m=>[...m,{role:'Agent',text:result.result.message}]);setJob(null);sessionStorage.removeItem('paperdesk:task');
         }
       }catch(e){if(!stopped){fail(e);setJob(null);sessionStorage.removeItem('paperdesk:task');}}
       finally{fetching=false;}
@@ -208,7 +223,6 @@ function App() {
   async function reloadDisk(){try{const latest=await api('/document?path='+encodeURIComponent(doc.path));accept(latest);localStorage.removeItem(draftKey(latest.path));setError('');}catch(e){fail(e);}}
   function downloadDraft(){const url=URL.createObjectURL(new Blob([text],{type:'text/plain'}));const a=document.createElement('a');a.href=url;a.download='draft.tex';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
   const texFiles=dir?.entries.filter(e=>!e.directory && e.name.endsWith('.tex'))||[];
-  const pdfFiles=dir?.entries.filter(e=>!e.directory && e.name.toLowerCase().endsWith('.pdf'))||[];
   return <div className="app">
     <header>
       <button className="directory" disabled={aiBusy||busy} onClick={chooseNativeDirectory} title={dir ? dir.root+'/'+dir.path : 'Choose directory'}><FolderOpen size={16}/>{busy ? 'Choosing…' : dir ? dir.path||dir.root.split('/').at(-1) : 'Choose directory'}</button>
@@ -224,7 +238,7 @@ function App() {
     {error&&<div className="error" role="alert"><details><summary>{error.split('\n')[0].slice(0,180)}</summary><pre>{error}</pre></details>{status==='Save failed'&&<><button onClick={downloadDraft}>Download draft</button><button onClick={reloadDisk}>Use disk version</button></>}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
     <main>
       <section className="left"><div className="panel-title">{doc?.path.split('/').at(-1)||'LaTeX'}</div><div className="editor">{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{dir?'Select a .tex file or ask the agent to create one.':'Choose a directory.'}</div>}</div>
-      <section className="codex">{historyOpen&&<div className="chat-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onPointerUp={()=>{historyDrag.current=null;}} onPointerCancel={()=>{historyDrag.current=null;}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/> }<div className="codex-title"><span>Agent</span><span className="status">{aiBusy?'Working…':''}</span><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(!historyOpen)}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>{historyOpen&&<div className="messages" style={{height:historyHeight}}>{!messages.length&&<span className="muted">No messages yet.</span>}{messages.map((m,i)=><div key={i}><strong>{m.role}</strong><p>{m.text}</p></div>)}</div>}<textarea aria-label="Agent request" placeholder="Ask the agent to edit or create a file, or convert a PDF…" disabled={!dir||aiBusy} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={composerKey}/><div className="codex-actions"><select aria-label="Attach PDF" value={source} disabled={aiBusy||!dir} onChange={e=>setSource(e.target.value)}><option value="">Attach PDF…</option>{pdfFiles.map(f=><option key={f.path} value={f.path}>{f.name}</option>)}</select><div className="spacer"/><button className="send" aria-label="Send to Agent" disabled={!prompt.trim()||!dir||aiBusy} onClick={send}><ArrowUp size={16}/></button></div></section>
+      <section className="codex" onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(!e.dataTransfer.files.length||!dir||aiBusy)return;e.preventDefault();attach([...e.dataTransfer.files]);}}>{historyOpen&&<div className="chat-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onPointerUp={()=>{historyDrag.current=null;}} onPointerCancel={()=>{historyDrag.current=null;}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/> }<div className="codex-title"><span>Agent</span><span className="status">{aiBusy?'Working…':''}</span><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(!historyOpen)}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>{historyOpen&&<div className="messages" style={{height:historyHeight}}>{!messages.length&&<span className="muted">No messages yet.</span>}{messages.map((m,i)=><div key={i}><strong>{m.role}</strong>{m.files?.length>0&&<p className="muted">{m.files.join(', ')}</p>}<p>{m.text}</p></div>)}</div>}{attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a.key} className={'attachment'+(a.id?'':' uploading')} title={a.id?a.name:'Uploading '+a.name}>{a.kind==='image'?<Image size={13}/>:<FileText size={13}/>}<span>{a.name}</span><button aria-label={'Remove '+a.name} onClick={()=>detach(a)}><X size={12}/></button></span>)}</div>}<textarea aria-label="Agent request" placeholder="Ask the agent to edit or create a file, or convert a PDF…" disabled={!dir||aiBusy} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={composerKey} onPaste={e=>{if(e.clipboardData.files.length&&!e.clipboardData.getData('text/plain')){e.preventDefault();attach([...e.clipboardData.files]);}}}/><div className="codex-actions"><button className="attach" aria-label="Attach files" title="Attach files" disabled={aiBusy||!dir} onClick={()=>fileInput.current.click()}><Paperclip size={15}/></button><input ref={fileInput} type="file" multiple hidden onChange={e=>{attach([...e.target.files]);e.target.value='';}}/><div className="spacer"/><button className="send" aria-label="Send to Agent" disabled={!prompt.trim()||!dir||aiBusy||uploading} onClick={send}><ArrowUp size={16}/></button></div></section>
       </section>
       <section className="right"><div className="panel-title"><span>PDF</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview key={pdf.path} url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
     </main>
