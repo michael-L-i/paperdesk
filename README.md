@@ -14,7 +14,7 @@ Open http://localhost:4317.
 
 1. Click **Choose directory** to open the native macOS folder picker, then choose a folder in `Fall 26:27`.
 2. Select a `.tex` file from the toolbar. It opens on the left and compiles on the right.
-3. Use the Agent panel for edits, questions, or larger tasks. To convert a PDF, attach it and ask the agent to convert it. You can also name the PDF in your request. A directory with only a PDF needs no setup first.
+3. Use the Agent panel for edits, questions, or larger tasks. Enter sends; Shift Enter or ⌘/Ctrl Enter adds a line. To convert a PDF, attach it and ask the agent to convert it. You can also name the PDF in your request. A directory with only a PDF needs no setup first.
 4. The agent saves its output, selects the resulting `.tex` file, and compiles it automatically. The editor pauses during an agent request to prevent conflicting edits.
 
 Drag over PDF text to select it and use ⌘/Ctrl C to copy. Double-click a location on the compiled PDF to jump to and select the corresponding LaTeX line (SyncTeX inverse search). Included `.tex` files open in the editor while the main file remains the compilation target. Recompile once after upgrading to create the source map. Stale previews must finish compiling before source navigation; mapping is to the nearest source line or paragraph, not an exact character.

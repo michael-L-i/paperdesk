@@ -174,7 +174,14 @@ try {
   await page.locator('canvas[data-rendered=true]').first().waitFor();
   // Return to the first PDF page for independent scrolling checks below.
   await page.locator('.pdf-pages').evaluate(el=>{el.scrollTop=0;});
+  let taskRequests=0;
+  page.on('request',r=>{if(r.url().endsWith('/api/task'))taskRequests++;});
   await page.getByLabel('Agent request').fill('Keep this draft.');
+  await page.getByLabel('Agent request').press('Shift+Enter');
+  await page.getByLabel('Agent request').press('Meta+Enter');
+  assert.equal(await page.getByLabel('Agent request').inputValue(),'Keep this draft.\n\n','Shift/⌘ Enter add lines');
+  await page.getByLabel('Agent request').fill('Keep this draft.');
+  assert.equal(taskRequests,0,'Adding lines does not send');
   await page.getByRole('button',{name:'Expand chat history'}).click();
   const resize=page.getByRole('separator',{name:'Resize chat history'});
   await resize.focus();await page.keyboard.press('ArrowUp');
@@ -255,7 +262,7 @@ try {
   await page.getByText('Select a .tex file or ask the agent to create one.').waitFor();
   await page.getByLabel('Attach PDF').selectOption('Import/exam.pdf');
   await page.getByLabel('Agent request').fill('Convert this PDF to LaTeX.');
-  await page.getByRole('button',{name:'Send to Agent'}).click();
+  await page.getByLabel('Agent request').press('Enter');
   await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='Import/exam_solutions.tex',{},{timeout:60000});
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('exam_solutions.pdf'),{},{timeout:180000});
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam.pdf')),originalPDF);
