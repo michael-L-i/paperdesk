@@ -49,7 +49,7 @@ let browser,page;
 try {
   for(let i=0;i<60;i++){try{if((await fetch(url+'/api/directory')).ok)break;}catch{}await new Promise(r=>setTimeout(r,250));}
   browser=await chromium.launch({executablePath:process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
-  page=await browser.newPage({viewport:{width:1440,height:960}});
+  page=await browser.newPage({viewport:{width:1440,height:960},reducedMotion:'reduce'});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   let chosenDirectory='Course';
   await page.route('**/api/choose-directory',route=>route.fulfill({json:chosenDirectory === null ? {cancelled:true} : {path:chosenDirectory}}));
@@ -268,9 +268,12 @@ try {
   await page.getByLabel('Agent request').fill('Convert this PDF to LaTeX.');
   await page.getByLabel('Agent request').press('Enter');
   await page.getByRole('button',{name:'Remove exam.pdf'}).waitFor({state:'detached'});
+  await page.locator('.message.user').filter({hasText:'Convert this PDF to LaTeX.'}).filter({hasText:'exam.pdf'}).waitFor();
   await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='Import/exam_solutions.tex',{},{timeout:60000});
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('exam_solutions.pdf'),{},{timeout:180000});
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam.pdf')),originalPDF);
+  await page.locator('.message:not(.user)').filter({hasText:'Converted exam.pdf.'}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Collapse chat history'}).count(),1,'Sending opens the thread');
   const codexCall=JSON.parse(await fs.readFile(path.join(root,'codex-call.json'),'utf8'));
   assert.ok(codexCall.args.includes('-i'),'Attached PDF pages are sent as images');
   assert.match(codexCall.prompt,/--- exam\.pdf ---\n[\s\S]*Solve/,'Attached PDF text is in the prompt');

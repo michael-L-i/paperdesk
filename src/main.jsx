@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import CodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
@@ -22,8 +22,8 @@ function App() {
   const [pdf,setPdf]=useState(null), [compiling,setCompiling]=useState(false), [error,setError]=useState('');
   const [dialog,setDialog]=useState(null), [newName,setNewName]=useState('main.tex'), [busy,setBusy]=useState(false);
   const [historyOpen,setHistoryOpen]=useState(false), [prompt,setPrompt]=useState(''), [attachments,setAttachments]=useState([]);
-  const [historyHeight,setHistoryHeight]=useState(180);
-  const historyDrag=useRef(null);
+  const [historyHeight,setHistoryHeight]=useState(180), [resizing,setResizing]=useState(false);
+  const historyDrag=useRef(null), thread=useRef(null), composer=useRef(null);
   const [job,setJob]=useState(null), [starting,setStarting]=useState(false), [messages,setMessages]=useState([]);
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
   const editorView=useRef(null), primaryFile=useRef(null), fileInput=useRef(null);
@@ -178,7 +178,7 @@ function App() {
       const primary=saved&&primaryFile.current!==saved.path?await api('/document?path='+encodeURIComponent(primaryFile.current)):saved;
       const request=await api('/task',{directory:dir.path,path:primary?.path,revision:primary?.revision,attachments:attachments.map(a=>a.id),instruction:prompt});
       const pending={id:request.id,directory:dir.path};
-      setMessages(m=>[...m,{role:'You',text:prompt,files:attachments.map(a=>a.name)}]);setPrompt('');setAttachments([]);setJob(pending);
+      setMessages(m=>[...m,{role:'You',text:prompt,files:attachments.map(({name,kind})=>({name,kind}))}]);setPrompt('');setAttachments([]);setJob(pending);setHistoryOpen(true);
       sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));
     }catch(e){fail(e);}finally{setStarting(false);}
   }
@@ -189,6 +189,12 @@ function App() {
     if(e.metaKey||e.ctrlKey){const t=e.currentTarget;t.setRangeText('\n',t.selectionStart,t.selectionEnd,'end');setPrompt(t.value);}
     else send();
   }
+  // The composer grows with its text; the thread follows the latest message.
+  useLayoutEffect(()=>{
+    const t=composer.current;if(!t)return;
+    t.style.height='auto';t.style.height=Math.min(t.scrollHeight,160)+'px';
+  },[prompt]);
+  useEffect(()=>{thread.current?.scrollTo({top:thread.current.scrollHeight});},[messages,aiBusy,historyOpen]);
   useEffect(()=>{
     if(!job)return;
     let stopped=false,fetching=false;
@@ -205,7 +211,7 @@ function App() {
             if(state.current.dir?.path===job.directory){accept(next);await refreshDirectory();setPdf(previous=>previous?.path===next.path.replace(/\.tex$/,'.pdf')?previous:null);}
           }
           if(result.result.style){setStyle(result.result.style);setDialog('style');}
-          setMessages(m=>[...m,{role:'Agent',text:result.result.message}]);setJob(null);sessionStorage.removeItem('paperdesk:task');
+          setMessages(m=>[...m,{role:'Agent',text:result.result.message}]);setHistoryOpen(true);setJob(null);sessionStorage.removeItem('paperdesk:task');
         }
       }catch(e){if(!stopped){fail(e);setJob(null);sessionStorage.removeItem('paperdesk:task');}}
       finally{fetching=false;}
@@ -238,7 +244,20 @@ function App() {
     {error&&<div className="error" role="alert"><details><summary>{error.split('\n')[0].slice(0,180)}</summary><pre>{error}</pre></details>{status==='Save failed'&&<><button onClick={downloadDraft}>Download draft</button><button onClick={reloadDisk}>Use disk version</button></>}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
     <main>
       <section className="left"><div className="panel-title">{doc?.path.split('/').at(-1)||'LaTeX'}</div><div className="editor">{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{dir?'Select a .tex file or ask the agent to create one.':'Choose a directory.'}</div>}</div>
-      <section className="codex" onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(!e.dataTransfer.files.length||!dir||aiBusy)return;e.preventDefault();attach([...e.dataTransfer.files]);}}>{historyOpen&&<div className="chat-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onPointerUp={()=>{historyDrag.current=null;}} onPointerCancel={()=>{historyDrag.current=null;}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/> }<div className="codex-title"><span>Agent</span><span className="status">{aiBusy?'Working…':''}</span><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(!historyOpen)}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>{historyOpen&&<div className="messages" style={{height:historyHeight}}>{!messages.length&&<span className="muted">No messages yet.</span>}{messages.map((m,i)=><div key={i}><strong>{m.role}</strong>{m.files?.length>0&&<p className="muted">{m.files.join(', ')}</p>}<p>{m.text}</p></div>)}</div>}{attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a.key} className={'attachment'+(a.id?'':' uploading')} title={a.id?a.name:'Uploading '+a.name}>{a.kind==='image'?<Image size={13}/>:<FileText size={13}/>}<span>{a.name}</span><button aria-label={'Remove '+a.name} onClick={()=>detach(a)}><X size={12}/></button></span>)}</div>}<textarea aria-label="Agent request" placeholder="Ask the agent to edit or create a file, or convert a PDF…" disabled={!dir||aiBusy} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={composerKey} onPaste={e=>{if(e.clipboardData.files.length&&!e.clipboardData.getData('text/plain')){e.preventDefault();attach([...e.clipboardData.files]);}}}/><div className="codex-actions"><button className="attach" aria-label="Attach files" title="Attach files" disabled={aiBusy||!dir} onClick={()=>fileInput.current.click()}><Paperclip size={15}/></button><input ref={fileInput} type="file" multiple hidden onChange={e=>{attach([...e.target.files]);e.target.value='';}}/><div className="spacer"/><button className="send" aria-label="Send to Agent" disabled={!prompt.trim()||!dir||aiBusy||uploading} onClick={send}><ArrowUp size={16}/></button></div></section>
+      <section className={'agent'+(resizing?' resizing':'')} onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(!e.dataTransfer.files.length||!dir)return;e.preventDefault();attach([...e.dataTransfer.files]);}}>
+        {historyOpen&&<div className="agent-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);setResizing(true);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onLostPointerCapture={()=>{historyDrag.current=null;setResizing(false);}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/>}
+        <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
+        <div className="thread" ref={thread} style={{height:historyOpen?historyHeight:0}} inert={!historyOpen}><div className="thread-inner">
+          {!messages.length&&!aiBusy&&<p className="thread-empty">Ask a question, request an edit, or attach a file.</p>}
+          {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{f.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}<p>{m.text}</p></div>)}
+          {aiBusy&&<div className="thinking" role="status" aria-label="Agent is working"><span/><span/><span/></div>}
+        </div></div>
+        <div className="composer" onClick={e=>{if(e.target===e.currentTarget)composer.current?.focus();}}>
+          {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a.key} className={'attachment'+(a.id?'':' uploading')} title={a.id?a.name:'Uploading '+a.name}>{a.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{a.name}</span><button aria-label={'Remove '+a.name} onClick={()=>detach(a)}><X size={12}/></button></span>)}</div>}
+          <textarea ref={composer} rows={1} aria-label="Agent request" placeholder="Ask anything or request an edit…" disabled={!dir} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={composerKey} onPaste={e=>{if(e.clipboardData.files.length&&!e.clipboardData.getData('text/plain')){e.preventDefault();attach([...e.clipboardData.files]);}}}/>
+          <div className="composer-actions"><button className="attach" aria-label="Attach files" title="Attach files" disabled={!dir} onClick={()=>fileInput.current.click()}><Paperclip size={16}/></button><input ref={fileInput} type="file" multiple hidden onChange={e=>{attach([...e.target.files]);e.target.value='';}}/><div className="spacer"/><button className="send" aria-label="Send to Agent" title="Send (Enter)" disabled={!prompt.trim()||!dir||aiBusy||uploading} onClick={send}><ArrowUp size={16}/></button></div>
+        </div>
+      </section>
       </section>
       <section className="right"><div className="panel-title"><span>PDF</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview key={pdf.path} url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
     </main>
