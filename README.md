@@ -14,7 +14,7 @@ Open http://localhost:4317.
 
 1. Click **Choose directory** to open the native macOS folder picker, then choose a folder in `Fall 26:27`.
 2. Select a `.tex` file from the toolbar. It opens on the left and compiles on the right.
-3. Use the Agent panel for edits, questions, or larger tasks. Enter sends; Shift Enter or ⌘/Ctrl Enter adds a line. Use the paperclip (or paste or drop files) to attach context: PDFs, images, Word/RTF documents, or any text file. To convert a PDF, attach it and ask the agent to convert it. You can also name a PDF in the directory in your request. A directory with only a PDF needs no setup first.
+3. Use the Agent panel for edits, questions, or larger tasks. Enter sends; Shift Enter or ⌘/Ctrl Enter adds a line. The agent can read everything in the workspace: it sees the folder's files (and which PDFs are compiled from which `.tex`), opens PDFs, code, and notes itself, and remembers the conversation. A status line shows what it is reading. Ask it to convert `hw1.pdf` or explain a problem without attaching anything; use the paperclip (or paste or drop) for files from elsewhere. A directory with only a PDF needs no setup first.
 4. The agent saves its output, selects the resulting `.tex` file, and compiles it automatically. The editor pauses during an agent request to prevent conflicting edits.
 
 Drag over PDF text to select it and use ⌘/Ctrl C to copy. Double-click a location on the compiled PDF to jump to and select the corresponding LaTeX line (SyncTeX inverse search). Included `.tex` files open in the editor while the main file remains the compilation target. Recompile once after upgrading to create the source map. Stale previews must finish compiling before source navigation; mapping is to the nearest source line or paragraph, not an exact character.
@@ -27,7 +27,7 @@ Builds run `latexmk`, so BibTeX/biber, indexes, and reruns happen automatically.
 
 Documents remain in the selected directory. App data is in `.data/`; recovery snapshots are in each document folder's `.paperdesk/history/` (80 versions per folder). Unsaved drafts are retained in browser storage. External file changes trigger a save conflict rather than an overwrite.
 
-The app uses the local Codex CLI login. AI requests send document context, the writing profile, recent examples, and any attached files to Codex's configured provider. Attached PDFs use extracted text and rendered pages (24 pages maximum in total). Uploads are kept in `.data/uploads` until the request finishes. Check unclear math and diagrams against the original. The agent returns one LaTeX document per request; it does not run arbitrary filesystem operations from chat.
+The app uses the local Codex CLI login. Requests send the open document, the conversation, the writing profile, recent examples, and whatever files the agent reads to Codex's configured provider. The agent runs in Codex's `workspace-write` sandbox inside a scratch folder: it can read and run commands (for example `pdftotext`, `pdftoppm`, `latexmk`), but cannot change your files. It returns one LaTeX document per request, which the app saves with the usual revision checks. Uploads are kept in `.data/uploads` until the request finishes. Check unclear math and diagrams against the original.
 
 Node 22+, Codex, TeX Live (`brew install texlive` or MacTeX), and Poppler (`pdftotext`, `pdftoppm`, `pdfinfo`) must be on PATH. They are installed on this Mac. The server is loopback-only and restricts files to the workspace. It is intended for personal local use.
 

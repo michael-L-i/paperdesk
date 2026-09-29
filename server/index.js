@@ -82,57 +82,55 @@ app.post('/api/new-document', async (req, res) => {
 });
 app.post('/api/uploads', express.raw({ type: () => true, limit: '50mb' }), async (req, res) => res.json(await uploads.add(req.query.name || '', req.body)));
 app.delete('/api/uploads/:id', async (req, res) => { await uploads.remove(req.params.id); res.json({ ok: true }); });
+// One agent request at a time; the client polls /api/jobs/:id for the result.
+function startJob(fields, ask) {
+  if (aiBusy) throw httpError('The agent is already working.', 409);
+  for (const [key, old] of jobs) if (old.status !== 'running' && Date.now() - old.started > 3600000) jobs.delete(key);
+  const job = { id: crypto.randomUUID(), status: 'running', started: Date.now(), ...fields };
+  jobs.set(job.id, job); aiBusy = true;
+  ask(job).then(result => Object.assign(job, { status: 'done', result }), e => Object.assign(job, { status: 'error', error: e.message })).finally(() => { aiBusy = false; });
+  return job.id;
+}
+const size = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 app.post('/api/task', async (req,res) => {
-  if (aiBusy) throw httpError('The agent is already working.',409);
-  const { directory = '', instruction, path: primary, revision, attachments: ids = [] } = req.body;
+  const { directory = '', instruction, path: primary, revision, attachments: ids = [], history = [] } = req.body;
   if (typeof instruction !== 'string' || !instruction.trim() || instruction.length > 20000) throw httpError('Enter a request.');
   if (!Array.isArray(ids) || ids.length > 10) throw httpError('Attach up to 10 files.');
+  if (!Array.isArray(history) || history.some(m => !['You', 'Agent'].includes(m?.role) || typeof m.text !== 'string')) throw httpError('Invalid conversation.');
   const attachments = ids.map(id => uploads.get(id));
   const dir = await workspace.resolve(directory);
-  const entries = await fs.readdir(dir, {withFileTypes:true});
-  const names = entries.filter(e => e.isFile() && !e.name.startsWith('.')).map(e => e.name);
-  const documents = {};
-  for (const name of names.filter(n => n.endsWith('.tex'))) {
-    const relative = path.relative(root,path.join(dir,name));
-    const stat = await fs.stat(path.join(dir,name));
-    if (stat.size > 1_000_000) continue;
-    documents[relative] = await workspace.read(relative);
+  const entries = (await fs.readdir(dir, { withFileTypes: true })).filter(e => !e.name.startsWith('.'));
+  // Describe the folder so the agent knows, e.g., that hw.pdf is built from hw.tex.
+  const documents = {}, files = [];
+  for (const e of entries) {
+    const relative = path.relative(root, path.join(dir, e.name));
+    if (e.isDirectory()) { files.push(`- ${e.name}/`); continue; }
+    if (!e.isFile()) continue;
+    const { size: bytes } = await fs.stat(path.join(dir, e.name));
+    if (e.name.endsWith('.tex') && bytes <= 1_000_000) documents[relative] = await workspace.read(relative);
+    const source = e.name.replace(/\.pdf$/i, '.tex');
+    files.push(`- ${e.name} (${size(bytes)}${relative === primary ? ', open in the editor' : source !== e.name && entries.some(x => x.name === source) ? `, compiled from ${source}` : ''})`);
   }
   const doc = primary ? documents[primary] : null;
   if (primary && (!doc || doc.revision !== revision)) throw httpError('The primary file changed. Reload it before asking the agent.',409);
-  if (!attachments.length) {
-    const mentioned = names.filter(n => n.toLowerCase().endsWith('.pdf') && instruction.toLowerCase().includes(n.toLowerCase()));
-    const pdfs = names.filter(n => n.toLowerCase().endsWith('.pdf'));
-    const candidate = mentioned[0] || (/\b(convert|transcribe|import)\b/i.test(instruction) && pdfs.length === 1 ? pdfs[0] : null);
-    if (candidate) attachments.push({ name: candidate, kind: 'pdf', file: await workspace.resolve(path.relative(root,path.join(dir,candidate))) });
-    else if (/\b(convert|transcribe|import)\b.*\bpdf\b/i.test(instruction) && pdfs.length !== 1) throw httpError('Select the PDF to convert.');
-  }
   const style = await readStyle(), examples = await readJSON('examples.json', []);
-  const id = crypto.randomUUID();
-  const job = { id, status:'running', directory, primary, documents, attachments, started:Date.now() };
-  for(const [key,old] of jobs) if(old.status!=='running' && Date.now()-old.started>3600000) jobs.delete(key);
-  jobs.set(id,job); aiBusy=true;
-  res.json({id});
-  const context = JSON.stringify({ directory, files:names, primary:doc ? path.basename(doc.path) : null, attachments:attachments.map(a => a.name),
-    documents:Object.values(documents).slice(0,15).map(d => ({filename:path.basename(d.path),text:d.text.slice(0,12000)})) });
-  askAI({instruction, text:doc?.text || '',style,examples:examples.slice(-8),attachments,mode:'task',context})
-    .then(result => { job.result=result; job.status='done'; })
-    .catch(e => { job.error=e.message; job.status='error'; })
-    .finally(() => { aiBusy=false; for (const upload of ids) uploads.remove(upload).catch(() => {}); });
+  res.json({ id: startJob({ directory, primary, documents }, job => askAI({
+    instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), workspace: root, folder: dir, files, primary: doc && path.basename(doc.path), attachments,
+    history: history.slice(-12).map(m => ({ role: m.role, text: m.text.slice(0, 4000) })), onActivity: activity => { job.activity = activity; },
+  }).finally(() => { for (const id of ids) uploads.remove(id).catch(() => {}); })) });
 });
 app.post('/api/tasks/:id/apply', async (req,res) => {
   const job=jobs.get(req.params.id);
   if (!job || job.status !== 'done') throw httpError('The agent result is not ready.',409);
   if (job.applied) return res.json(job.applied);
   if (!job.result.latex) return res.json({message:job.result.message});
-  const pdf=job.attachments.find(a => a.kind === 'pdf');
-  const name=job.result.filename || (pdf ? path.basename(pdf.name,path.extname(pdf.name))+'_solutions.tex' : job.primary ? path.basename(job.primary) : 'main.tex');
+  const name=job.result.filename || (job.primary ? path.basename(job.primary) : 'main.tex');
   if (path.basename(name)!==name || !name.endsWith('.tex')) throw httpError('The agent returned an invalid filename.');
   const dir=await workspace.resolve(job.directory);
   const file=path.join(dir,name), relative=path.relative(root,file);
-  const output=file.replace(/\.tex$/,'.pdf');
-  if (job.attachments.some(a => a.name.toLowerCase() === path.basename(output).toLowerCase()) && await fs.stat(output).then(() => true, () => false)) throw httpError('This filename would overwrite the original PDF. Ask the agent to use another filename.');
   const prior=job.documents[relative];
+  // A new .tex must not compile over an existing PDF, such as the original assignment.
+  if (!prior && await fs.stat(file.replace(/\.tex$/,'.pdf')).then(() => true, () => false)) throw httpError('This filename would overwrite an existing PDF. Ask the agent to use another filename.');
   if(prior) job.applied=await workspace.save(relative,job.result.latex,prior.revision,'ai');
   else {
     await workspace.resolve(relative,false);
@@ -229,30 +227,16 @@ app.put('/api/style', async (req, res) => {
   await atomicWrite(stylePath, req.body.text); res.json({ ok: true });
 });
 app.delete('/api/style/examples', async (req, res) => { await workspace.exclusive('style-examples', () => writeJSON('examples.json', [])); res.json({ ok: true }); });
-app.post('/api/ai', async (req, res) => {
-  if (aiBusy) throw httpError('An AI request is already running.', 409);
-  const { path: file, instruction, selection, mode, revision } = req.body;
-  if (!['edit', 'question', 'import', 'style'].includes(mode) || typeof instruction !== 'string' || instruction.length > 20000 || (selection && typeof selection !== 'string')) throw httpError('Invalid AI request.');
+app.post('/api/style/suggest', async (req, res) => {
+  const { path: file, instruction, revision } = req.body;
+  if (typeof instruction !== 'string' || instruction.length > 20000) throw httpError('Invalid request.');
   const doc = await workspace.read(file);
   if (doc.revision !== revision) throw httpError('Save before asking the agent.', 409);
-  let source;
-  if (mode === 'import') {
-    source = await workspace.resolve(path.join(path.dirname(file), 'source.pdf'));
-  }
-  const style = await readStyle();
-  const examples = await readJSON('examples.json', []);
-  if (mode === 'style' && !examples.length) throw httpError('Write or revise some answers first. Human edits become examples after saving.');
-  const id = crypto.randomUUID();
-  const job = { id, status: 'running', file, revision, mode, started: Date.now() };
-  for (const [key, old] of jobs) if (old.status !== 'running' && Date.now() - old.started > 3600000) jobs.delete(key);
-  jobs.set(id, job); aiBusy = true;
-  res.json({ id });
-  askAI({ instruction, selection, mode, text: doc.text, style, examples: mode === 'style' ? examples : examples.slice(-8), source })
-    .then(result => Object.assign(job, { status: 'done', result }))
-    .catch(e => Object.assign(job, { status: 'error', error: e.message }))
-    .finally(() => { aiBusy = false; });
+  const style = await readStyle(), examples = await readJSON('examples.json', []);
+  if (!examples.length) throw httpError('Write or revise some answers first. Human edits become examples after saving.');
+  res.json({ id: startJob({ file, revision }, () => askAI({ instruction, mode: 'style', text: doc.text, style, examples })) });
 });
-app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {documents,attachments,...visible}=job; res.json(visible); });
+app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {documents,...visible}=job; res.json(visible); });
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(appDir, 'dist')));
   app.get('/{*path}', (req, res) => res.sendFile(path.join(appDir, 'dist/index.html')));

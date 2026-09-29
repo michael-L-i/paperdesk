@@ -24,7 +24,7 @@ function App() {
   const [historyOpen,setHistoryOpen]=useState(false), [prompt,setPrompt]=useState(''), [attachments,setAttachments]=useState([]);
   const [historyHeight,setHistoryHeight]=useState(180), [resizing,setResizing]=useState(false);
   const historyDrag=useRef(null), thread=useRef(null), composer=useRef(null);
-  const [job,setJob]=useState(null), [starting,setStarting]=useState(false), [messages,setMessages]=useState([]);
+  const [job,setJob]=useState(null), [starting,setStarting]=useState(false), [messages,setMessages]=useState([]), [activity,setActivity]=useState('');
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
   const editorView=useRef(null), primaryFile=useRef(null), fileInput=useRef(null);
   const state=useRef({doc:null,text:'',dir:null}), saves=useRef(Promise.resolve()), building=useRef(false), attemptedBuild=useRef('');
@@ -176,7 +176,7 @@ function App() {
     try {
       const saved=await save();
       const primary=saved&&primaryFile.current!==saved.path?await api('/document?path='+encodeURIComponent(primaryFile.current)):saved;
-      const request=await api('/task',{directory:dir.path,path:primary?.path,revision:primary?.revision,attachments:attachments.map(a=>a.id),instruction:prompt});
+      const request=await api('/task',{directory:dir.path,path:primary?.path,revision:primary?.revision,attachments:attachments.map(a=>a.id),history:messages.map(({role,text})=>({role,text})),instruction:prompt});
       const pending={id:request.id,directory:dir.path};
       setMessages(m=>[...m,{role:'You',text:prompt,files:attachments.map(({name,kind})=>({name,kind}))}]);setPrompt('');setAttachments([]);setJob(pending);setHistoryOpen(true);
       sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));
@@ -204,6 +204,7 @@ function App() {
         const result=await api('/jobs/'+job.id);
         if(stopped)return;
         if(result.status==='error')throw new Error(result.error);
+        setActivity(result.activity||'');
         if(result.status==='done') {
           if(result.result.latex) {
             const next=await api('/tasks/'+job.id+'/apply',{});
@@ -216,13 +217,13 @@ function App() {
       }catch(e){if(!stopped){fail(e);setJob(null);sessionStorage.removeItem('paperdesk:task');}}
       finally{fetching=false;}
     };
-    poll();const timer=setInterval(poll,1200);return()=>{stopped=true;clearInterval(timer);};
+    poll();const timer=setInterval(poll,1200);return()=>{stopped=true;clearInterval(timer);setActivity('');};
   },[job]);
   async function createFile() {
     try{await save();const next=await api('/new-document',{directory:dir.path,name:newName});accept(next);setPdf(null);await refreshDirectory();setDialog(null);}catch(e){fail(e);}
   }
   async function suggestStyle(){
-    try{const saved=await save();const request=await api('/ai',{path:saved.path,revision:saved.revision,mode:'style',instruction:'Suggest an updated writing profile from my edits.'});const pending={id:request.id,directory:dir.path};setJob(pending);sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));setDialog(null);setHistoryOpen(true);}catch(e){fail(e);}
+    try{const saved=await save();const request=await api('/style/suggest',{path:saved.path,revision:saved.revision,instruction:'Suggest an updated writing profile from my edits.'});const pending={id:request.id,directory:dir.path};setJob(pending);sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));setDialog(null);setHistoryOpen(true);}catch(e){fail(e);}
   }
   async function loadHistory(){setMenu(false);try{setHistory(await api('/history?path='+encodeURIComponent(doc.path)));setDialog('history');}catch(e){fail(e);}}
   async function loadStyle(){setMenu(false);try{const s=await api('/style');setStyle(s.text);setExamples(s.examples);setDialog('style');}catch(e){fail(e);}}
@@ -246,11 +247,11 @@ function App() {
       <section className="left"><div className="panel-title">{doc?.path.split('/').at(-1)||'LaTeX'}</div><div className="editor">{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{dir?'Select a .tex file or ask the agent to create one.':'Choose a directory.'}</div>}</div>
       <section className={'agent'+(resizing?' resizing':'')} onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(!e.dataTransfer.files.length||!dir)return;e.preventDefault();attach([...e.dataTransfer.files]);}}>
         {historyOpen&&<div className="agent-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);setResizing(true);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onLostPointerCapture={()=>{historyDrag.current=null;setResizing(false);}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/>}
-        <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
+        <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
         <div className="thread" ref={thread} style={{height:historyOpen?historyHeight:0}} inert={!historyOpen}><div className="thread-inner">
-          {!messages.length&&!aiBusy&&<p className="thread-empty">Ask a question, request an edit, or attach a file.</p>}
+          {!messages.length&&!aiBusy&&<p className="thread-empty">Ask about anything in this folder, request an edit, or attach a file.</p>}
           {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{f.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}<p>{m.text}</p></div>)}
-          {aiBusy&&<div className="thinking" role="status" aria-label="Agent is working"><span/><span/><span/></div>}
+          {aiBusy&&<div className="thinking" role="status" aria-label="Agent is working"><span className="dots"><i/><i/><i/></span>{activity}</div>}
         </div></div>
         <div className="composer" onClick={e=>{if(e.target===e.currentTarget)composer.current?.focus();}}>
           {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a.key} className={'attachment'+(a.id?'':' uploading')} title={a.id?a.name:'Uploading '+a.name}>{a.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{a.name}</span><button aria-label={'Remove '+a.name} onClick={()=>detach(a)}><X size={12}/></button></span>)}</div>}

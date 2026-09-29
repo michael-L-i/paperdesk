@@ -42,7 +42,7 @@ for(const ext of ['tex','aux','log'])await fs.unlink(path.join(root,'Import/exam
 const originalPDF=await fs.readFile(path.join(root,'Import/exam.pdf'));
 // Deterministic model fixture; PDF extraction/rendering, API jobs, application, and compilation remain real.
 const fake=path.join(root,'fake-codex.mjs');
-await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconst result={message:'Converted exam.pdf.',latex:${JSON.stringify(latex)},style:'',filename:'exam_solutions.tex'};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
+await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconsole.log(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'/bin/zsh -lc "pdftotext -layout exam.pdf -"'}}));\nawait new Promise(r=>setTimeout(r,2500));\nconst result={message:'Converted exam.pdf.',latex:${JSON.stringify(latex)},style:'',filename:'exam_solutions.tex'};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
 await fs.chmod(fake,0o755);
 const server=spawn(process.execPath,['server/index.js'],{cwd:app,env:{...process.env,NODE_ENV:'production',WORKSPACE_ROOT:root,PAPERDESK_DATA_DIR:path.join(root,'.app-data'),PORT:String(port),CODEX_BIN:fake},stdio:'pipe'});
 let browser,page;
@@ -269,6 +269,7 @@ try {
   await page.getByLabel('Agent request').fill('Convert this PDF to LaTeX.');
   await page.getByLabel('Agent request').press('Enter');
   await page.getByRole('button',{name:'Remove exam.pdf'}).waitFor({state:'detached'});
+  await page.locator('.thinking').filter({hasText:'Reading exam.pdf'}).waitFor();
   await page.locator('.message.user').filter({hasText:'Convert this PDF to LaTeX.'}).filter({hasText:'exam.pdf'}).waitFor();
   await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='Import/exam_solutions.tex',{},{timeout:60000});
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('exam_solutions.pdf'),{},{timeout:180000});
@@ -276,8 +277,9 @@ try {
   await page.locator('.message:not(.user)').filter({hasText:'Converted exam.pdf.'}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Collapse chat history'}).count(),1,'Sending opens the thread');
   const codexCall=JSON.parse(await fs.readFile(path.join(root,'codex-call.json'),'utf8'));
-  assert.ok(codexCall.args.includes('-i'),'Attached PDF pages are sent as images');
-  assert.match(codexCall.prompt,/--- exam\.pdf ---\n[\s\S]*Solve/,'Attached PDF text is in the prompt');
+  assert.ok(codexCall.args.includes('workspace-write'),'The agent can only write in its scratch directory');
+  assert.match(codexCall.prompt,/The user's folder is \S*Import, inside their workspace/,'The agent is pointed at the folder');
+  assert.match(codexCall.prompt,/attached these files for this request:\n- exam\.pdf: \S*exam\.pdf/,'Uploads are passed by path');
   assert.deepEqual(await fs.readdir(path.join(root,'.app-data/uploads')),[],'Uploads are removed after the request');
   assert.match(await fs.readFile(path.join(root,'Import/exam_solutions.tex'),'utf8'),/Solve/);
   assert.equal((await(await fetch(url+'/api/style')).json()).examples,1,'AI output excluded from human style');
@@ -295,7 +297,6 @@ try {
   assert.equal((await req('/inverse-search',{path:doc.path,revision:doc.revision,page:1,x:140,y:135})).status,409,'Stale source mappings are rejected');
   assert.equal((await req('/inverse-search',{path:doc.path,revision:doc.revision,page:0,x:0,y:0})).status,400);
   assert.equal((await fetch(url+'/api/directory?path=..')).status,403);
-  assert.equal((await fetch(url+'/api/uploads?name=blob.bin',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:new Uint8Array([1,0,2])})).status,415);
   assert.equal((await req('/task',{directory:'Import',instruction:'Summarize.',attachments:['missing']})).status,410);
   assert.equal((await fetch(url+'/api/new-document',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({directory:'Import',name:'bad.tex'})})).status,403);
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
