@@ -18,6 +18,7 @@ const fileURL = (path, version='') => '/api/pdf?path='+encodeURIComponent(path)+
 function App() {
   const [dir,setDir]=useState(null);
   const [doc,setDoc]=useState(null), [text,setText]=useState(''), [status,setStatus]=useState('');
+  const [autoCompile,setAutoCompile]=useState(()=>localStorage.getItem('paperdesk:autoCompile')!=='false');
   const [pdf,setPdf]=useState(null), [compiling,setCompiling]=useState(false), [error,setError]=useState('');
   const [dialog,setDialog]=useState(null), [newName,setNewName]=useState('main.tex'), [busy,setBusy]=useState(false);
   const [historyOpen,setHistoryOpen]=useState(false), [prompt,setPrompt]=useState(''), [source,setSource]=useState('');
@@ -134,16 +135,17 @@ function App() {
     building.current=true;setCompiling(true);
     try {
       const saved=await save();
+      attemptedBuild.current=saved.path+':'+saved.revision;
       const primary=primaryFile.current===saved.path?saved:await api('/document?path='+encodeURIComponent(primaryFile.current));
       const result=await api('/compile',{path:primary.path,revision:primary.revision});
-      if(primaryFile.current===primary.path) setPdf({path:result.pdf,version:Date.now(),revision:result.revision,editorPath:saved.path,editorRevision:saved.revision});
+      if(primaryFile.current===primary.path) {setError('');setPdf({path:result.pdf,version:Date.now(),revision:result.revision,editorPath:saved.path,editorRevision:saved.revision});}
     }catch(e){fail(e);}finally{building.current=false;setCompiling(false);}
   }
   useEffect(()=>{
-    if(!doc || status!=='Saved' || aiBusy || compiling || (pdf?.editorPath===doc.path&&pdf?.editorRevision===doc.revision)) return;
+    if(!autoCompile || !doc || status!=='Saved' || aiBusy || compiling || (pdf?.editorPath===doc.path&&pdf?.editorRevision===doc.revision)) return;
     if(attemptedBuild.current===doc.path+':'+doc.revision)return;
-    const timer=setTimeout(compile,700);return()=>clearTimeout(timer);
-  },[doc?.path,doc?.revision,status,aiBusy,compiling]);
+    const timer=setTimeout(compile,1000);return()=>clearTimeout(timer);
+  },[doc?.path,doc?.revision,status,aiBusy,compiling,autoCompile]);
   useEffect(()=>{
     const key=e=>{
       if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();save().catch(fail);}
@@ -178,7 +180,7 @@ function App() {
           if(result.result.latex) {
             const next=await api('/tasks/'+job.id+'/apply',{});
             if(stopped)return;
-            if(state.current.dir?.path===job.directory){accept(next);await refreshDirectory();setPdf(null);}
+            if(state.current.dir?.path===job.directory){accept(next);await refreshDirectory();setPdf(previous=>previous?.path===next.path.replace(/\.tex$/,'.pdf')?previous:null);}
           }
           if(result.result.style){setStyle(result.result.style);setDialog('style');}
           setMessages(m=>[...m,{role:'Codex',text:result.result.message}]);setJob(null);setSource('');sessionStorage.removeItem('paperdesk:task');
@@ -209,15 +211,15 @@ function App() {
       <span className="status">{status}</span>
       <div className="spacer"/>
       
-      <button disabled={!doc||compiling||aiBusy} onClick={()=>{setError('');compile();}}><RefreshCw size={14} className={compiling?'spin':''}/>{compiling?'Compiling':'Compile'}</button>
-      <div className="menu-wrap"><button aria-label="More" onClick={()=>setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu&&<div className="menu"><button disabled={!doc||aiBusy} onClick={loadHistory}>History</button><button onClick={loadStyle}>Writing style</button><button disabled={!dir||aiBusy} onClick={()=>{refreshDirectory().catch(fail);setMenu(false);}}>Refresh files</button></div>}</div>
+      <button disabled={!doc||compiling||aiBusy} onClick={()=>{setError('');compile();}}><RefreshCw size={14}/>Compile</button>
+      <div className="menu-wrap"><button aria-label="More" onClick={()=>setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu&&<div className="menu"><button role="menuitemcheckbox" aria-checked={autoCompile} onClick={()=>{const next=!autoCompile;setAutoCompile(next);localStorage.setItem('paperdesk:autoCompile',String(next));setMenu(false);}}>Auto-compile: {autoCompile?'on':'off'}</button><button disabled={!doc||aiBusy} onClick={loadHistory}>History</button><button onClick={loadStyle}>Writing style</button><button disabled={!dir||aiBusy} onClick={()=>{refreshDirectory().catch(fail);setMenu(false);}}>Refresh files</button></div>}</div>
     </header>
     {error&&<div className="error" role="alert"><details><summary>{error.split('\n')[0].slice(0,180)}</summary><pre>{error}</pre></details>{status==='Save failed'&&<><button onClick={downloadDraft}>Download draft</button><button onClick={reloadDisk}>Use disk version</button></>}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
     <main>
       <section className="left"><div className="panel-title">{doc?.path.split('/').at(-1)||'LaTeX'}</div><div className="editor">{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{dir?'Select a .tex file or ask Codex to create one.':'Choose a directory.'}</div>}</div>
       <section className="codex">{historyOpen&&<div className="chat-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onPointerUp={()=>{historyDrag.current=null;}} onPointerCancel={()=>{historyDrag.current=null;}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/> }<div className="codex-title"><span>Codex</span><span className="status">{aiBusy?'Working…':''}</span><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen} onClick={()=>setHistoryOpen(!historyOpen)}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>{historyOpen&&<div className="messages" style={{height:historyHeight}}>{!messages.length&&<span className="muted">No messages yet.</span>}{messages.map((m,i)=><div key={i}><strong>{m.role}</strong><p>{m.text}</p></div>)}</div>}<textarea aria-label="Codex request" placeholder="Ask Codex to edit or create a file, or convert a PDF…" disabled={!dir||aiBusy} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();send();}}}/><div className="codex-actions"><select aria-label="Attach PDF" value={source} disabled={aiBusy||!dir} onChange={e=>setSource(e.target.value)}><option value="">Attach PDF…</option>{pdfFiles.map(f=><option key={f.path} value={f.path}>{f.name}</option>)}</select><div className="spacer"/><button className="send" aria-label="Send to Codex" disabled={!prompt.trim()||!dir||aiBusy} onClick={send}><ArrowUp size={16}/></button></div></section>
       </section>
-      <section className="right"><div className="panel-title"><span>PDF</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
+      <section className="right"><div className="panel-title"><span>PDF</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview key={pdf.path} url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
     </main>
     {dialog&&<div className="backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label={dialog==='new'?'New file':dialog==='style'?'Writing style':'History'}><div className="dialog-title"><strong>{dialog==='new'?'New file':dialog==='style'?'Writing style':'History'}</strong><button aria-label="Close dialog" onClick={()=>setDialog(null)}><X size={16}/></button></div>
     {dialog==='new'&&<form onSubmit={e=>{e.preventDefault();createFile();}}><input autoFocus aria-label="Filename" value={newName} onChange={e=>setNewName(e.target.value)}/><div className="dialog-bottom"><div className="spacer"/><button className="primary" type="submit">Create</button></div></form>}

@@ -19,7 +19,7 @@ Open http://localhost:4317.
 
 Drag over PDF text to select it and use ⌘/Ctrl C to copy. Double-click a location on the compiled PDF to jump to and select the corresponding LaTeX line (SyncTeX inverse search). Included `.tex` files open in the editor while the main file remains the compilation target. Recompile once after upgrading to create the source map. Stale previews must finish compiling before source navigation; mapping is to the nearest source line or paragraph, not an exact character.
 
-Edits autosave. Compilation runs automatically after saving; **Compile** also runs it manually (⌘/Ctrl Enter). A failed build preserves the previous PDF. Use the file selector to change the primary file. The directory and primary file are remembered on reload.
+Edits autosave. Compilation runs after about 1.7 seconds without typing. The previous PDF stays visible until the updated pages are ready, with the scroll position preserved. **More → Auto-compile** switches between automatic and manual compilation and remembers your choice; **Compile** also runs it manually (⌘/Ctrl Enter). A failed build preserves the previous PDF. Use the file selector to change the primary file. The directory and primary file are remembered on reload.
 
 **More → History** restores earlier saves. **More → Writing style** edits your profile or proposes notes from your saved edits. Human edits automatically become examples for future requests; AI changes and restores are excluded. This is prompt memory, not model training. You can clear the examples and profile.
 

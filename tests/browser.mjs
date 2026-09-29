@@ -154,9 +154,13 @@ try {
   assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/main.tex','Included-file navigation retains the primary compile target');
   await page.waitForFunction(()=>window.getSelection()?.toString()==='Included answer paragraph.');
   const includedBefore=await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8');
+  const editedAt=Date.now();
+  const autoBuild=page.waitForRequest(r=>r.url().endsWith('/api/compile'));
   await page.keyboard.insertText('Updated included answer.');
   await page.getByText('Saved',{exact:true}).waitFor();
   assert.equal(await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8'),'Updated included answer.\n');
+  await autoBuild;
+  assert.ok(Date.now()-editedAt>=1500,'Auto-compile waits for a typing pause');
   await page.waitForFunction(()=>document.querySelector('.right .status')?.textContent==='');
   assert.equal(await page.locator('.pdf-pages').getAttribute('data-url').then(u=>u.includes('main.pdf')),true);
   // Undo the edit so the later provenance check still has one human example.
@@ -201,11 +205,40 @@ try {
   await page.getByRole('button',{name:'Collapse chat history'}).click();
 
 
+  // Manual mode still saves, but does not compile until requested.
+  await page.getByRole('button',{name:'More',exact:true}).click();
+  await page.getByRole('menuitemcheckbox',{name:'Auto-compile: on'}).click();
+  await page.waitForFunction(()=>!document.querySelector('.pdf-pending'));
+  let compileRequests=0;
+  page.on('request',r=>{if(r.url().endsWith('/api/compile'))compileRequests++;});
   const editor=page.locator('.cm-content');
   await editor.click();await page.keyboard.press('Meta+End');await page.keyboard.insertText('\n% My phrasing: first isolate the variable, then simplify.');
   await page.getByText('Saved',{exact:true}).waitFor();
   assert.match(await fs.readFile(path.join(root,'Course/main.tex'),'utf8'),/My phrasing/);
   assert.equal((await(await fetch(url+'/api/style')).json()).examples,1);
+  await page.waitForTimeout(2000);
+  assert.equal(compileRequests,0,'Manual mode saves without compiling');
+  const beforeRefresh=await page.locator('.pdf-pages').evaluate(el=>({url:el.dataset.url,top:el.scrollTop,pixels:el.querySelector('canvas').toDataURL()}));
+  assert.ok(beforeRefresh.top>0);
+  let releasePDF;
+  const pdfGate=new Promise(resolve=>{releasePDF=resolve;});
+  await page.route('**/api/pdf?**',async route=>{await pdfGate;await route.continue();});
+  await page.getByRole('button',{name:'Compile',exact:true}).click();
+  await page.waitForFunction(old=>document.querySelector('.pdf-pages').dataset.requestedUrl!==old,beforeRefresh.url);
+  const whileLoading=await page.locator('.pdf-pages').evaluate(el=>({url:el.dataset.url,top:el.scrollTop,pixels:el.querySelector('canvas').toDataURL()}));
+  assert.deepEqual(whileLoading,beforeRefresh,'Keep the old PDF and scroll offset while its replacement loads');
+  assert.equal(await page.locator('.preview .empty').count(),0,'No loading flash during a refresh');
+  assert.equal(await page.locator('.spin').count(),0,'Compilation has no spinning animation');
+  releasePDF();
+  await page.waitForFunction(old=>document.querySelector('.pdf-pages').dataset.url!==old,beforeRefresh.url);
+  assert.equal(await page.locator('.pdf-pages').evaluate(el=>el.scrollTop),beforeRefresh.top,'Swap preserves scroll offset');
+  assert.equal(await page.locator('.pdf-pending').count(),0);
+  await page.unroute('**/api/pdf?**');
+  assert.equal(compileRequests,1);
+  await page.reload();
+  await page.getByRole('button',{name:'More',exact:true}).click();
+  await page.getByRole('menuitemcheckbox',{name:'Auto-compile: off'}).waitFor();
+  await page.getByRole('menuitemcheckbox',{name:'Auto-compile: off'}).click();
   await page.getByLabel('Primary TeX file').selectOption('Course/other.tex');
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('other.pdf'));
   await page.getByRole('button',{name:'More',exact:true}).click();
@@ -243,6 +276,6 @@ try {
   assert.equal((await fetch(url+'/api/new-document',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({directory:'Import',name:'bad.tex'})})).status,403);
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('Passed: PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), directory selection, primary file switching, autosave, style memory, PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
+  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), directory selection, primary file switching, autosave, style memory, PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
 }catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}
