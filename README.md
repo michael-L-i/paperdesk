@@ -19,7 +19,9 @@ Open http://localhost:4317.
 
 Drag over PDF text to select it and use ⌘/Ctrl C to copy. Double-click a location on the compiled PDF to jump to and select the corresponding LaTeX line (SyncTeX inverse search). Included `.tex` files open in the editor while the main file remains the compilation target. Recompile once after upgrading to create the source map. Stale previews must finish compiling before source navigation; mapping is to the nearest source line or paragraph, not an exact character.
 
-Edits autosave. Compilation runs after about 1.7 seconds without typing. The previous PDF stays visible until the updated pages are ready, with the scroll position preserved. **More → Auto-compile** switches between automatic and manual compilation and remembers your choice; **Compile** also runs it manually (⌘/Ctrl Enter). A failed build preserves the previous PDF. Use the file selector to change the primary file. The directory and primary file are remembered on reload.
+Edits autosave. Compilation runs after about 1.7 seconds without typing. The previous PDF stays visible until the updated pages are ready, with the scroll position preserved. **More → Auto-compile** switches between automatic and manual compilation and remembers your choice; **Compile** also runs it manually (⌘/Ctrl Enter). A failed build preserves the previous PDF and shows the first TeX error.
+
+Builds run `latexmk`, so BibTeX/biber, indexes, and reruns happen automatically. The engine is chosen per document: a `% !TEX program = xelatex` (or `pdflatex`, `lualatex`) line at the top wins; otherwise `fontspec`, `unicode-math`, `polyglossia`, or `\setmainfont` selects XeLaTeX, `luacode` or `\directlua` selects LuaLaTeX, and everything else uses pdfLaTeX. If the log shows the document needs another engine, the build retries once with it. The PDF panel shows the engine used. Use the file selector to change the primary file. The directory and primary file are remembered on reload.
 
 **More → History** restores earlier saves. **More → Writing style** edits your profile or proposes notes from your saved edits. Human edits automatically become examples for future requests; AI changes and restores are excluded. This is prompt memory, not model training. You can clear the examples and profile.
 
@@ -27,7 +29,7 @@ Documents remain in the selected directory. App data is in `.data/`; recovery sn
 
 The app uses the local Codex CLI login. AI requests send document context, the writing profile, recent examples, and any attached files to Codex's configured provider. Attached PDFs use extracted text and rendered pages (24 pages maximum in total). Uploads are kept in `.data/uploads` until the request finishes. Check unclear math and diagrams against the original. The agent returns one LaTeX document per request; it does not run arbitrary filesystem operations from chat.
 
-Node 22+, Codex, Tectonic, and Poppler (`pdftotext`, `pdftoppm`, `pdfinfo`) must be on PATH. They are installed on this Mac. Tectonic can download packages on the first build. The server is loopback-only and restricts files to the workspace. It is intended for personal local use.
+Node 22+, Codex, TeX Live (`brew install texlive` or MacTeX), and Poppler (`pdftotext`, `pdftoppm`, `pdfinfo`) must be on PATH. They are installed on this Mac. The server is loopback-only and restricts files to the workspace. It is intended for personal local use.
 
 Configuration: `WORKSPACE_ROOT` defaults to this repo's parent; `PORT` defaults to `4317`; `CODEX_BIN` defaults to `codex`; `PAPERDESK_DATA_DIR` defaults to `.data`. Run `npm run dev` for development.
 

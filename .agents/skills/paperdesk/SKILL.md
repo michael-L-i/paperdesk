@@ -11,4 +11,4 @@ Use the supplied writing profile and human edits to match the user's wording and
 
 In the UI, return complete LaTeX and a single filename. The app saves the result with revision checks and recovery snapshots, selects that file, and compiles it automatically. For questions without edits, return an answer with empty LaTeX. Give short, direct status messages.
 
-When invoked directly, read the selected paper and `.data/writing-style.md` first. Preserve original PDFs and compile requested edits with `tectonic --untrusted`. Report unresolved conversion or compilation errors.
+When invoked directly, read the selected paper and `.data/writing-style.md` first. Preserve original PDFs and compile requested edits with `latexmk` (`-pdf`, `-xelatex`, or `-lualatex`, matching the document). Report unresolved conversion or compilation errors.

@@ -2,7 +2,7 @@
 set -e
 cd "${0:A:h}"
 # Finder-launched terminals may not have the same PATH as your development shell.
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/Library/TeX/texbin:$PATH"
 if ! command -v node >/dev/null 2>&1; then
   if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
     source "$HOME/.nvm/nvm.sh"

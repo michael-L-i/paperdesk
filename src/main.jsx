@@ -138,7 +138,7 @@ function App() {
       attemptedBuild.current=saved.path+':'+saved.revision;
       const primary=primaryFile.current===saved.path?saved:await api('/document?path='+encodeURIComponent(primaryFile.current));
       const result=await api('/compile',{path:primary.path,revision:primary.revision});
-      if(primaryFile.current===primary.path) {setError('');setPdf({path:result.pdf,version:Date.now(),revision:result.revision,editorPath:saved.path,editorRevision:saved.revision});}
+      if(primaryFile.current===primary.path) {setError('');setPdf({path:result.pdf,version:Date.now(),revision:result.revision,engine:result.engine,editorPath:saved.path,editorRevision:saved.revision});}
     }catch(e){fail(e);}finally{building.current=false;setCompiling(false);}
   }
   useEffect(()=>{
@@ -259,7 +259,7 @@ function App() {
         </div>
       </section>
       </section>
-      <section className="right"><div className="panel-title"><span>PDF</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview key={pdf.path} url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
+      <section className="right"><div className="panel-title"><span>PDF{pdf?.engine&&' · '+pdf.engine}</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview key={pdf.path} url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
     </main>
     {dialog&&<div className="backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label={dialog==='new'?'New file':dialog==='style'?'Writing style':'History'}><div className="dialog-title"><strong>{dialog==='new'?'New file':dialog==='style'?'Writing style':'History'}</strong><button aria-label="Close dialog" onClick={()=>setDialog(null)}><X size={16}/></button></div>
     {dialog==='new'&&<form onSubmit={e=>{e.preventDefault();createFile();}}><input autoFocus aria-label="Filename" value={newName} onChange={e=>setNewName(e.target.value)}/><div className="dialog-bottom"><div className="spacer"/><button className="primary" type="submit">Create</button></div></form>}

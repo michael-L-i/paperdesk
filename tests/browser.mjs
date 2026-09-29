@@ -37,8 +37,8 @@ await fs.writeFile(path.join(root,'Course/parts/answer.tex'),'Included answer pa
 await fs.writeFile(path.join(root,'Course/main.tex'),longLatex);
 await fs.writeFile(path.join(root,'Course/other.tex'),latex.replace('Solve','Find x in'));
 await fs.writeFile(path.join(root,'Import/exam.tex'),latex);
-await run('tectonic',['--untrusted',path.join(root,'Import/exam.tex')]);
-await fs.unlink(path.join(root,'Import/exam.tex'));
+await run('pdflatex',['-interaction=nonstopmode','exam.tex'],{cwd:path.join(root,'Import')});
+for(const ext of ['tex','aux','log'])await fs.unlink(path.join(root,'Import/exam.'+ext));
 const originalPDF=await fs.readFile(path.join(root,'Import/exam.pdf'));
 // Deterministic model fixture; PDF extraction/rendering, API jobs, application, and compilation remain real.
 const fake=path.join(root,'fake-codex.mjs');
@@ -58,6 +58,7 @@ try {
   await page.locator('canvas[data-rendered=true]').first().waitFor({timeout:180000});
   assert.equal(await page.locator('iframe').count(),0);
   assert.equal(await page.getByLabel('Download PDF').count(),1);
+  assert.equal(await page.locator('.right .panel-title>span').first().textContent(),'PDF · pdfLaTeX');
   assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/main.tex');
 
   // Select only part of the active source line: its background must not hide the highlight.
@@ -286,7 +287,9 @@ try {
   const doc=await(await fetch(url+'/api/document?path=Import/exam_solutions.tex')).json();
   const goodPDF=await fs.readFile(path.join(root,'Import/exam_solutions.pdf'));
   const broken=await req('/document',{path:doc.path,revision:doc.revision,text:'\\documentclass{article}\\begin{document}\\badcommand\\end{document}'},'PUT');
-  assert.equal((await req('/compile',{path:doc.path,revision:broken.data.revision})).status,500);
+  const failed=await req('/compile',{path:doc.path,revision:broken.data.revision});
+  assert.equal(failed.status,500);
+  assert.match(failed.data.error,/^exam_solutions\.tex:1: Undefined control sequence/);
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam_solutions.pdf')),goodPDF);
   assert.equal((await req('/document',{path:doc.path,revision:doc.revision,text:'lost'},'PUT')).status,409);
   assert.equal((await req('/inverse-search',{path:doc.path,revision:doc.revision,page:1,x:140,y:135})).status,409,'Stale source mappings are rejected');

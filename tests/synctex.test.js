@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { gunzipSync } from 'node:zlib';
 import { run } from '../server/process.js';
+import { compileLatex } from '../server/latex.js';
 import { parseSourceMap, inverseSearch } from '../server/synctex.js';
 
 test('real SyncTeX maps repeated text, math and included files across pages', async () => {
@@ -28,9 +29,10 @@ Repeated paragraph here.
 \end{document}`;
     await fs.writeFile(path.join(dir,'main.tex'),source);
     await fs.writeFile(path.join(dir,'parts/answer.tex'),'Included answer here.\n');
-    await run('tectonic',['--untrusted','--synctex',path.join(dir,'main.tex')],{cwd:dir});
-    const map=parseSourceMap(gunzipSync(await fs.readFile(path.join(dir,'main.synctex.gz'))).toString());
-    const {stdout}=await run('pdftotext',['-bbox',path.join(dir,'main.pdf'),'-']);
+    await fs.mkdir(path.join(dir,'out'));
+    await compileLatex(path.join(dir,'main.tex'),source,path.join(dir,'out'));
+    const map=parseSourceMap(gunzipSync(await fs.readFile(path.join(dir,'out/main.synctex.gz'))).toString());
+    const {stdout}=await run('pdftotext',['-bbox',path.join(dir,'out/main.pdf'),'-']);
     const pages=[...stdout.matchAll(/<page\b[^>]*>([\s\S]*?)<\/page>/g)];
     function word(page,text) {
       const match=[...pages[page-1][1].matchAll(/<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">([^<]+)<\/word>/g)].find(m=>m[5]===text);

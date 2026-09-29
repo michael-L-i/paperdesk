@@ -11,6 +11,7 @@ import { gunzipSync } from 'node:zlib';
 import { parseSourceMap, inverseSearch } from './synctex.js';
 import { hash } from './workspace.js';
 import { Uploads } from './uploads.js';
+import { compileLatex } from './latex.js';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = path.resolve(process.env.WORKSPACE_ROOT || path.join(appDir, '..'));
 const workspace = new Workspace(root, appDir);
@@ -141,12 +142,6 @@ app.post('/api/tasks/:id/apply', async (req,res) => {
   delete job.applied.previous;
   res.json(job.applied);
 });
-app.get('/api/health', async (req, res) => {
-  const tools = await Promise.all(['codex', 'tectonic', 'pdftotext', 'pdftoppm', 'pdfinfo'].map(async name => {
-    try { await run(name, [name === 'codex' ? '--version' : name === 'tectonic' ? '--version' : '-v'], { timeout: 10000 }); return { name, available: true }; }
-    catch { return { name, available: false }; }
-  })); res.json({ tools });
-});
 app.get('/api/document', async (req, res) => res.json(await workspace.read(req.query.path)));
 app.post('/api/project', async (req, res) => res.json(await workspace.create(req.body.folder, req.body.source)));
 app.put('/api/document', async (req, res) => {
@@ -169,29 +164,30 @@ app.post('/api/compile', async (req, res) => {
     const file = await workspace.resolve(relative);
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'paperdesk-build-'));
     try {
-      const log = await run('tectonic', ['--untrusted', '--synctex', '--keep-logs', '--outdir', temp, file], { cwd: path.dirname(file), timeout: 180000 });
+      const engine = await compileLatex(file, doc.text, temp);
       const output = file.replace(/\.tex$/, '.pdf');
       await workspace.resolve(path.relative(root, output), false);
       const compiled = await fs.readFile(path.join(temp, path.basename(output)));
       const rawSync = gunzipSync(await fs.readFile(path.join(temp,path.basename(file,'.tex')+'.synctex.gz'))).toString('utf8');
       const sourceMap = parseSourceMap(rawSync);
+      // TeX records real paths, which differ from the workspace path under a symlink.
+      const realRoot = await fs.realpath(root), realDir = await fs.realpath(path.dirname(file));
+      const sourceName = input => path.relative(realRoot, path.resolve(realDir, input));
       const inputs = {};
       for (const input of sourceMap.files) {
         try {
-          const resolved = await workspace.resolve(path.resolve(path.dirname(file),input));
-          if (!resolved.endsWith('.tex')) continue;
-          const name = path.relative(root,resolved);
-          inputs[name] = hash(await fs.readFile(resolved));
+          const name = sourceName(input), resolved = await workspace.resolve(name);
+          if (resolved.endsWith('.tex')) inputs[name] = hash(await fs.readFile(resolved));
         } catch { /* Package inputs outside the workspace are not editable. */ }
       }
       if ((await workspace.read(relative)).revision !== doc.revision) throw httpError('Source changed during compilation. Compile again.',409);
-      sourceMap.records = sourceMap.records.map(r=>({...r,path:path.relative(root,path.resolve(path.dirname(file),r.path))})).filter(r=>inputs[r.path]);
+      sourceMap.records = sourceMap.records.map(r=>({...r,path:sourceName(r.path)})).filter(r=>inputs[r.path]);
       const metadata = { revision:doc.revision, pdfHash:hash(compiled), inputs, records:sourceMap.records };
       const mapDir = await workspace.resolve(path.relative(root,path.join(path.dirname(file),'.paperdesk','sync')),false);
       await fs.mkdir(mapDir,{recursive:true});
       await atomicWrite(output, compiled);
       await atomicWrite(path.join(mapDir,path.basename(file)+'.json'),JSON.stringify(metadata));
-      return { pdf: path.relative(root, output), revision: doc.revision, log: log.stdout + log.stderr };
+      return { pdf: path.relative(root, output), revision: doc.revision, engine };
     } finally { await fs.rm(temp, { recursive: true, force: true }); }
   }); res.json(result);
 });
