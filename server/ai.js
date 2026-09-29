@@ -24,7 +24,7 @@ export async function askAI({ instruction, text, selection, style, examples, sou
     args.push('-');
     await run(process.env.CODEX_BIN || 'codex', args, { cwd: temp, input: prompt, timeout: 600000, onOutput });
     const result = JSON.parse(await fs.readFile(path.join(temp, 'result.json'), 'utf8'));
-    if (typeof result.message !== 'string' || typeof result.latex !== 'string' || typeof result.style !== 'string') throw new Error('Codex returned an invalid response. No files were changed.');
+    if (typeof result.message !== 'string' || typeof result.latex !== 'string' || typeof result.style !== 'string') throw new Error('The agent returned an invalid response. No files were changed.');
     return result;
   } finally { await fs.rm(temp, { recursive: true, force: true }); }
 }

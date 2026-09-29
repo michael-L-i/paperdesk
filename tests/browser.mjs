@@ -174,15 +174,15 @@ try {
   await page.locator('canvas[data-rendered=true]').first().waitFor();
   // Return to the first PDF page for independent scrolling checks below.
   await page.locator('.pdf-pages').evaluate(el=>{el.scrollTop=0;});
-  await page.getByLabel('Codex request').fill('Keep this draft.');
+  await page.getByLabel('Agent request').fill('Keep this draft.');
   await page.getByRole('button',{name:'Expand chat history'}).click();
   const resize=page.getByRole('separator',{name:'Resize chat history'});
   await resize.focus();await page.keyboard.press('ArrowUp');
   assert.equal(await resize.getAttribute('aria-valuenow'),'200');
   await page.getByRole('button',{name:'Collapse chat history'}).click();
-  assert.equal(await page.getByLabel('Codex request').inputValue(),'Keep this draft.');
-  assert.equal(await page.getByLabel('Codex request').isVisible(),true);
-  await page.getByLabel('Codex request').fill('');
+  assert.equal(await page.getByLabel('Agent request').inputValue(),'Keep this draft.');
+  assert.equal(await page.getByLabel('Agent request').isVisible(),true);
+  await page.getByLabel('Agent request').fill('');
   // Wheel input is contained by the pane under the pointer, including at boundaries.
   const positions=()=>page.evaluate(()=>({editor:document.querySelector('.cm-scroller').scrollTop,pdf:document.querySelector('.pdf-pages').scrollTop,page:document.scrollingElement.scrollTop}));
   const editorPane=page.locator('.cm-scroller');
@@ -201,7 +201,7 @@ try {
   const handle=await page.getByRole('separator',{name:'Resize chat history'}).boundingBox();
   await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);await page.mouse.down();await page.mouse.move(handle.x+handle.width/2,handle.y-75,{steps:5});await page.mouse.up();
   assert.ok(Number(await page.getByRole('separator',{name:'Resize chat history'}).getAttribute('aria-valuenow'))>250);
-  const inputBox=await page.getByLabel('Codex request').boundingBox();assert.ok(inputBox.y+inputBox.height<960);
+  const inputBox=await page.getByLabel('Agent request').boundingBox();assert.ok(inputBox.y+inputBox.height<960);
   await page.getByRole('button',{name:'Collapse chat history'}).click();
 
 
@@ -252,10 +252,10 @@ try {
   assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/other.tex');
   chosenDirectory='Import';
   await page.getByRole('button',{name:'Course',exact:true}).click();
-  await page.getByText('Select a .tex file or ask Codex to create one.').waitFor();
+  await page.getByText('Select a .tex file or ask the agent to create one.').waitFor();
   await page.getByLabel('Attach PDF').selectOption('Import/exam.pdf');
-  await page.getByLabel('Codex request').fill('Convert this PDF to LaTeX.');
-  await page.getByRole('button',{name:'Send to Codex'}).click();
+  await page.getByLabel('Agent request').fill('Convert this PDF to LaTeX.');
+  await page.getByRole('button',{name:'Send to Agent'}).click();
   await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='Import/exam_solutions.tex',{},{timeout:60000});
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('exam_solutions.pdf'),{},{timeout:180000});
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam.pdf')),originalPDF);

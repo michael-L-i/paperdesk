@@ -78,7 +78,7 @@ app.post('/api/new-document', async (req, res) => {
   res.json(await workspace.read(path.relative(root,file)));
 });
 app.post('/api/task', async (req,res) => {
-  if (aiBusy) throw httpError('Codex is already working.',409);
+  if (aiBusy) throw httpError('The agent is already working.',409);
   const { directory = '', instruction, path: primary, revision, source } = req.body;
   if (typeof instruction !== 'string' || !instruction.trim() || instruction.length > 20000) throw httpError('Enter a request.');
   const dir = await workspace.resolve(directory);
@@ -92,7 +92,7 @@ app.post('/api/task', async (req,res) => {
     documents[relative] = await workspace.read(relative);
   }
   const doc = primary ? documents[primary] : null;
-  if (primary && (!doc || doc.revision !== revision)) throw httpError('The primary file changed. Reload it before asking Codex.',409);
+  if (primary && (!doc || doc.revision !== revision)) throw httpError('The primary file changed. Reload it before asking the agent.',409);
   let pdf;
   if (source) {
     pdf = await workspace.resolve(source);
@@ -119,19 +119,19 @@ app.post('/api/task', async (req,res) => {
 });
 app.post('/api/tasks/:id/apply', async (req,res) => {
   const job=jobs.get(req.params.id);
-  if (!job || job.status !== 'done') throw httpError('Codex result is not ready.',409);
+  if (!job || job.status !== 'done') throw httpError('The agent result is not ready.',409);
   if (job.applied) return res.json(job.applied);
   if (!job.result.latex) return res.json({message:job.result.message});
   const name=job.result.filename || (job.source ? path.basename(job.source,'.pdf')+'_solutions.tex' : job.primary ? path.basename(job.primary) : 'main.tex');
-  if (path.basename(name)!==name || !name.endsWith('.tex')) throw httpError('Codex returned an invalid filename.');
+  if (path.basename(name)!==name || !name.endsWith('.tex')) throw httpError('The agent returned an invalid filename.');
   const dir=await workspace.resolve(job.directory);
   const file=path.join(dir,name), relative=path.relative(root,file);
-  if (job.source && file.replace(/\.tex$/,'.pdf')===job.source) throw httpError('This filename would overwrite the original PDF. Ask Codex to use another filename.');
+  if (job.source && file.replace(/\.tex$/,'.pdf')===job.source) throw httpError('This filename would overwrite the original PDF. Ask the agent to use another filename.');
   const prior=job.documents[relative];
   if(prior) job.applied=await workspace.save(relative,job.result.latex,prior.revision,'ai');
   else {
     await workspace.resolve(relative,false);
-    await fs.writeFile(file,job.result.latex,{flag:'wx'}).catch(e=>{if(e.code==='EEXIST')throw httpError('That file was created while Codex was working. No changes applied.',409);throw e;});
+    await fs.writeFile(file,job.result.latex,{flag:'wx'}).catch(e=>{if(e.code==='EEXIST')throw httpError('That file was created while the agent was working. No changes applied.',409);throw e;});
     job.applied=await workspace.read(relative);
   }
   delete job.applied.previous;
@@ -234,7 +234,7 @@ app.post('/api/ai', async (req, res) => {
   const { path: file, instruction, selection, mode, revision } = req.body;
   if (!['edit', 'question', 'import', 'style'].includes(mode) || typeof instruction !== 'string' || instruction.length > 20000 || (selection && typeof selection !== 'string')) throw httpError('Invalid AI request.');
   const doc = await workspace.read(file);
-  if (doc.revision !== revision) throw httpError('Save before asking Codex.', 409);
+  if (doc.revision !== revision) throw httpError('Save before asking the agent.', 409);
   let source;
   if (mode === 'import') {
     source = await workspace.resolve(path.join(path.dirname(file), 'source.pdf'));
