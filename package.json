@@ -1,8 +1,32 @@
 {
   "name": "paperdesk",
   "version": "0.1.0",
+  "description": "Local LaTeX editor with live PDF preview, SyncTeX, and an AI agent powered by the Codex CLI.",
+  "keywords": [
+    "latex",
+    "tex",
+    "latex-editor",
+    "pdf",
+    "synctex",
+    "latexmk",
+    "codex",
+    "ai-agent",
+    "local-first",
+    "overleaf-alternative"
+  ],
+  "license": "MIT",
+  "author": "Michael Li",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michael-L-i/paperdesk.git"
+  },
+  "homepage": "https://github.com/michael-L-i/paperdesk#readme",
+  "bugs": "https://github.com/michael-L-i/paperdesk/issues",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node server/index.js",
     "build": "node node_modules/vite/bin/vite.js build",
