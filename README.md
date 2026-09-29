@@ -1,47 +1,97 @@
 # Paperdesk
 
-Local LaTeX editor with a PDF preview and an AI agent (runs on the Codex CLI).
+[![CI](https://github.com/michael-L-i/paperdesk/actions/workflows/ci.yml/badge.svg)](https://github.com/michael-L-i/paperdesk/actions/workflows/ci.yml)
 
-Double-click **Start Paperdesk.command**, or run:
+**A local LaTeX editor with a live PDF preview and an AI agent that can read your whole workspace.**
 
-```sh
-npm install --include=dev
-npm run build
-npm start
-```
+Write LaTeX on the left and see the PDF on the right. Ask the agent to explain a problem set, convert a PDF to LaTeX, or edit your document. The agent runs on the [Codex CLI](https://github.com/openai/codex). Everything runs on your machine, using your own TeX Live install and Codex login.
 
-Open http://localhost:4317.
+![Paperdesk showing LaTeX source, a chat with the agent, and the compiled PDF](docs/screenshot.png)
 
-1. Click **Choose directory** to open the native macOS folder picker, then choose a folder in `Fall 26:27`.
-2. Select a `.tex` file from the toolbar. It opens on the left and compiles on the right.
-3. Use the Agent panel for edits, questions, or larger tasks. Enter sends; Shift Enter or ⌘/Ctrl Enter adds a line. The agent can read everything in the workspace: it sees the folder's files (and which PDFs are compiled from which `.tex`), opens PDFs, code, and notes itself, and remembers the conversation. A status line shows what it is reading. Replies render like ChatGPT: Markdown headings, lists, tables, code, and KaTeX math. Ask it to convert `hw1.pdf` or explain a problem without attaching anything; use the paperclip (or paste or drop) for files from elsewhere. A directory with only a PDF needs no setup first.
-4. The agent saves its output, selects the resulting `.tex` file, and compiles it automatically. The editor pauses during an agent request to prevent conflicting edits.
+## Features
 
-Drag over PDF text to select it and use ⌘/Ctrl C to copy. Double-click a location on the compiled PDF to jump to and select the corresponding LaTeX line (SyncTeX inverse search). Included `.tex` files open in the editor while the main file remains the compilation target. Recompile once after upgrading to create the source map. Stale previews must finish compiling before source navigation; mapping is to the nearest source line or paragraph, not an exact character.
+- **Live preview.** Edits autosave and compile when you pause typing. The PDF updates without losing your scroll position.
+- **Any engine.** Builds use `latexmk` with pdfLaTeX, XeLaTeX, or LuaLaTeX, picked per document. BibTeX, biber, and reruns happen automatically.
+- **SyncTeX.** Double-click the PDF to jump to the matching source line.
+- **An agent that sees your folder.** It reads PDFs, notes, and code itself, knows which PDF is built from which `.tex`, and remembers the conversation.
+- **Safe edits.** The agent can read your files but not modify them. Paperdesk saves the agent's LaTeX with revision checks and history snapshots.
+- **A readable chat.** Replies render Markdown and KaTeX math. Attach files with the paperclip, paste, or drag and drop.
+- **Your writing style.** Your own edits become examples the agent follows. This is prompt memory, not model training.
 
-Edits autosave. Compilation runs after about 1.7 seconds without typing. The previous PDF stays visible until the updated pages are ready, with the scroll position preserved. **More → Auto-compile** switches between automatic and manual compilation and remembers your choice; **Compile** also runs it manually (⌘/Ctrl Enter). A failed build preserves the previous PDF and shows the first TeX error.
+## Requirements
 
-Builds run `latexmk`, so BibTeX/biber, indexes, and reruns happen automatically. The engine is chosen per document: a `% !TEX program = xelatex` (or `pdflatex`, `lualatex`) line at the top wins; otherwise `fontspec`, `unicode-math`, `polyglossia`, or `\setmainfont` selects XeLaTeX, `luacode` or `\directlua` selects LuaLaTeX, and everything else uses pdfLaTeX. If the log shows the document needs another engine, the build retries once with it. The PDF panel shows the engine used. Use the file selector to change the primary file. The directory and primary file are remembered on reload.
-
-**More → History** restores earlier saves. **More → Writing style** edits your profile or proposes notes from your saved edits. Human edits automatically become examples for future requests; AI changes and restores are excluded. This is prompt memory, not model training. You can clear the examples and profile.
-
-Documents remain in the selected directory. App data is in `.data/`; recovery snapshots are in each document folder's `.paperdesk/history/` (80 versions per folder). Unsaved drafts are retained in browser storage. External file changes trigger a save conflict rather than an overwrite.
-
-The app uses the local Codex CLI login. Requests send the open document, the conversation, the writing profile, recent examples, and whatever files the agent reads to Codex's configured provider. The agent runs in Codex's `workspace-write` sandbox inside a scratch folder: it can read and run commands (for example `pdftotext`, `pdftoppm`, `latexmk`), but cannot change your files. It returns one LaTeX document per request, which the app saves with the usual revision checks. Uploads are kept in `.data/uploads` until the request finishes. Check unclear math and diagrams against the original.
-
-Node 22+, Codex, TeX Live (`brew install texlive` or MacTeX), and Poppler (`pdftotext`, `pdftoppm`, `pdfinfo`) must be on PATH. They are installed on this Mac. The server is loopback-only and restricts files to the workspace. It is intended for personal local use.
-
-Configuration: `WORKSPACE_ROOT` defaults to this repo's parent; `PORT` defaults to `4317`; `CODEX_BIN` defaults to `codex`; `PAPERDESK_DATA_DIR` defaults to `.data`. Run `npm run dev` for development.
-
-The reusable skill is `.agents/skills/paperdesk/SKILL.md`. The CLI integration uses [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive/).
-
-Validation:
+- macOS (the folder picker uses the native dialog)
+- Node 22+
+- TeX Live and Poppler
+- [Codex CLI](https://github.com/openai/codex), signed in (only needed for the agent)
 
 ```sh
-npm test
-npm run build
-npm run test:browser
-npm run test:ai # Uses your Codex account
+brew install node texlive biber poppler
+npm install -g @openai/codex && codex login
 ```
 
-Browser tests use temporary directories and render real compiled PDFs with PDF.js. `CHROME_BIN` overrides the Chrome executable for tests.
+MacTeX works in place of the `texlive` formula.
+
+## Quick start
+
+```sh
+git clone https://github.com/michael-L-i/paperdesk.git
+cd paperdesk
+npm install
+npm run build
+WORKSPACE_ROOT=~/Documents npm start
+```
+
+Open http://localhost:4317, click **Choose directory**, and pick a folder with a `.tex` file, or with just a PDF you want converted. `WORKSPACE_ROOT` is the folder Paperdesk may access. It defaults to the folder that contains this repo. On macOS you can also double-click **Start Paperdesk.command**.
+
+## Usage
+
+| To | Do this |
+|---|---|
+| Compile now | Click **Compile**, or press ⌘/Ctrl Enter outside the chat |
+| Turn auto-compile on or off | **More → Auto-compile** |
+| Jump from the PDF to the source | Double-click the PDF |
+| Force an engine | Put `% !TEX program = xelatex` (or `pdflatex`, `lualatex`) at the top of the file |
+| Send a chat message / add a line | Enter / Shift Enter |
+| Restore an earlier save | **More → History** |
+| Edit your writing profile | **More → Writing style** |
+
+Without a magic comment, Paperdesk picks the engine from the preamble:
+
+- `fontspec`, `unicode-math`, `polyglossia`, or `\setmainfont` → XeLaTeX
+- `luacode` or `\directlua` → LuaLaTeX
+- anything else → pdfLaTeX
+
+If the log shows the document needs a different engine, the build retries once with it. A failed build keeps the previous PDF and shows the first TeX error. Unsaved drafts survive a reload. If a file changes outside Paperdesk, you get a conflict warning instead of an overwrite.
+
+## How the agent works
+
+Each request runs `codex exec` in a scratch folder with the `workspace-write` sandbox. The agent can read your workspace and run commands such as `pdftotext`, `pdftoppm`, and `latexmk`, but it can't modify your files. It returns a message, plus one complete `.tex` file when a document should change. Paperdesk saves that file with a revision check and a history snapshot. The agent's standing instructions are in [`.agents/skills/paperdesk/SKILL.md`](.agents/skills/paperdesk/SKILL.md).
+
+Each request sends the open document, the conversation, your writing profile, and any files the agent reads to your Codex provider.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WORKSPACE_ROOT` | Parent folder of this repo | Folder Paperdesk may read and write |
+| `PORT` | `4317` | Server port (listens on 127.0.0.1 only) |
+| `CODEX_BIN` | `codex` | Codex CLI executable |
+| `PAPERDESK_DATA_DIR` | `.data` | Writing profile, edit examples, and uploads |
+
+Each document folder keeps its save history in `.paperdesk/history/` (the last 80 versions).
+
+## Development
+
+```sh
+npm run dev            # UI served through Vite; restart after server changes
+npm test               # unit tests (need TeX Live and Poppler)
+npm run test:browser   # end-to-end tests in Chrome (set CHROME_BIN to override)
+npm run test:ai        # live check that uses your Codex account
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to get involved, and [SECURITY.md](SECURITY.md) to report a vulnerability.
+
+## License
+
+[MIT](LICENSE)
