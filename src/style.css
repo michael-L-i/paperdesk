@@ -82,3 +82,25 @@
 .attachment.uploading{opacity:.55}
 @media(max-width:700px){.agent-title{padding:0 3px 0 8px}.thread-inner{padding:2px 8px 12px}.composer{margin:0 8px 8px}}
 @media(prefers-reduced-motion:reduce){.thread,.composer{transition:none}.dots i{animation:none;opacity:.6}}
+
+/* Home: the project list. */
+.brand{font-size:13px;font-weight:600}
+.project-name{max-width:30vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.error>span{flex:1}
+main.projects{display:block;overflow:auto;padding:36px 24px}
+.projects-inner{max-width:900px;margin:0 auto}
+.projects-top{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.projects h1{flex:1;margin:0;font-size:18px;font-weight:600}
+.projects input[type=search]{width:240px;max-width:45vw}
+.projects table{width:100%;border-collapse:collapse;font-size:13px}
+.projects th{padding:8px 10px;border-bottom:1px solid #dedede;text-align:left;font-size:11px;font-weight:500;color:#999}
+.projects td{padding:9px 10px;border-bottom:1px solid #eee}
+.projects tbody tr:hover td{background:#fafafa}
+.projects td a{font-weight:500;text-decoration:none}
+.projects td a:hover{text-decoration:underline}
+.projects .location{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#777}
+.row-actions{width:1%;text-align:right;white-space:nowrap}
+.row-actions button{padding:5px;color:#999}
+.row-actions button:hover{color:#303030}
+.projects-empty{padding:40px 0;text-align:center;font-size:12px}
+@media(max-width:700px){main.projects{padding:20px 12px}.projects .location{display:none}}

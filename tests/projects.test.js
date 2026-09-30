@@ -1,0 +1,42 @@
+import { test, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { Projects } from '../server/projects.js';
+let root, projects;
+const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+beforeEach(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), 'paperdesk-projects-')); projects = new Projects(path.join(root, 'projects.json'), path.join(root, 'library')); });
+afterEach(async () => { await fs.rm(root, { recursive: true, force: true }); });
+test('link a folder once and list recently opened projects first', async () => {
+  await fs.mkdir(path.join(root, 'Course'));
+  const course = await projects.link(path.join(root, 'Course'));
+  assert.equal((await projects.link(path.join(root, 'Course/'))).id, course.id);
+  await assert.rejects(projects.link('Course'), { status: 400 });
+  await assert.rejects(projects.link(path.join(root, 'missing')), { status: 400 });
+  await tick(); await projects.create('Paper');
+  assert.deepEqual((await projects.list()).map(p => p.name), ['Paper', 'Course']);
+  await tick(); await projects.open(course.id, { mainFile: 'main.tex' });
+  const [first] = await projects.list();
+  assert.equal(first.id, course.id);
+  assert.equal(first.mainFile, 'main.tex');
+  await fs.rm(path.join(root, 'Course'), { recursive: true });
+  assert.equal((await projects.list())[0].missing, true);
+});
+test('create library projects in their own folders', async () => {
+  const first = await projects.create('Thesis'), second = await projects.create(' Thesis ');
+  assert.equal(first.kind, 'library');
+  assert.equal(path.relative(root, first.path), path.join('library', 'Thesis'));
+  assert.equal(path.basename(second.path), 'Thesis 2');
+  assert.match(await fs.readFile(path.join(first.path, 'main.tex'), 'utf8'), /\\documentclass/);
+  await assert.rejects(projects.create('../escape'), { status: 400 });
+  await assert.rejects(projects.create('  '), { status: 400 });
+});
+test('removing a linked project keeps its folder', async () => {
+  await fs.mkdir(path.join(root, 'Course'));
+  const course = await projects.link(path.join(root, 'Course'));
+  await projects.remove(course.id);
+  assert.deepEqual(await projects.list(), []);
+  assert.ok((await fs.stat(path.join(root, 'Course'))).isDirectory());
+  await assert.rejects(projects.get(course.id), { status: 404 });
+});

@@ -18,18 +18,26 @@ export async function atomicWrite(file, content) {
   try { await fs.writeFile(tmp, content); await fs.rename(tmp, file); }
   finally { await fs.rm(tmp, { force: true }); }
 }
+const locks = new Map();
+// Serializes work per key, such as an absolute file path, across every Workspace.
+export async function withLock(key, fn) {
+  const prior = locks.get(key) || Promise.resolve();
+  const next = prior.catch(() => {}).then(fn);
+  locks.set(key, next);
+  try { return await next; } finally { if (locks.get(key) === next) locks.delete(key); }
+}
 export class Workspace {
-  constructor(root, appDir) { this.root = path.resolve(root); this.appDir = appDir; this.locks = new Map(); }
+  constructor(root, appDir) { this.root = path.resolve(root); this.appDir = appDir; }
   async resolve(relative = '', existing = true) {
     if (typeof relative !== 'string' || relative.includes('\0')) throw httpError('Invalid path.');
     const target = path.resolve(this.root, relative);
-    if (target !== this.root && !target.startsWith(this.root + path.sep)) throw httpError('Choose a folder inside the workspace.', 403);
+    if (target !== this.root && !target.startsWith(this.root + path.sep)) throw httpError('Paths outside the project are not allowed.', 403);
     let probe = target;
     while (true) {
       try {
         const real = await fs.realpath(probe);
         const realRoot = await fs.realpath(this.root);
-        if (real !== realRoot && !real.startsWith(realRoot + path.sep)) throw httpError('Paths outside the workspace are not allowed.', 403);
+        if (real !== realRoot && !real.startsWith(realRoot + path.sep)) throw httpError('Paths outside the project are not allowed.', 403);
         break;
       } catch (e) {
         if (e.code !== 'ENOENT' || existing || probe === this.root) throw e;
@@ -53,12 +61,7 @@ export class Workspace {
     await visit(this.root);
     return files.sort();
   }
-  async exclusive(key, fn) {
-    const prior = this.locks.get(key) || Promise.resolve();
-    const next = prior.catch(() => {}).then(fn);
-    this.locks.set(key, next);
-    try { return await next; } finally { if (this.locks.get(key) === next) this.locks.delete(key); }
-  }
+  exclusive(key, fn) { return withLock(path.join(this.root, key), fn); }
   async read(relative) {
     if (!relative.endsWith('.tex')) throw httpError('Choose a .tex file.');
     const file = await this.resolve(relative);

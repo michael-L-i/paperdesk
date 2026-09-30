@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/michael-L-i/paperdesk/actions/workflows/ci.yml/badge.svg)](https://github.com/michael-L-i/paperdesk/actions/workflows/ci.yml)
 
-**A local LaTeX editor with a live PDF preview and an AI agent that can read your whole workspace.**
+**A local LaTeX editor with a live PDF preview and an AI agent that can read your whole project.**
 
 Write LaTeX on the left and see the PDF on the right. Ask the agent to explain a problem set, convert a PDF to LaTeX, or edit your document. The agent runs on the [Codex CLI](https://github.com/openai/codex). Everything runs on your machine, using your own TeX Live install and Codex login.
 
@@ -39,10 +39,15 @@ git clone https://github.com/michael-L-i/paperdesk.git
 cd paperdesk
 npm install
 npm run build
-WORKSPACE_ROOT=~/Documents npm start
+npm start
 ```
 
-Open http://localhost:4317, click **Choose directory**, and pick a folder with a `.tex` file, or with just a PDF you want converted. `WORKSPACE_ROOT` is the folder Paperdesk may access. It defaults to the folder that contains this repo. On macOS you can also double-click **Start Paperdesk.command**.
+Open http://localhost:4317 to see your projects. Click **New project**, then:
+
+- **Blank project** creates a folder in your Paperdesk library (`~/Documents/Paperdesk`).
+- **Open folder…** links a folder you already have, such as one with a `.tex` file or just a PDF you want converted.
+
+Paperdesk only reads and writes inside your projects' folders. Removing a linked project only takes it off the list. Deleting a library project moves its folder to the Trash. On macOS you can also double-click **Start Paperdesk.command**.
 
 ## Usage
 
@@ -66,7 +71,7 @@ If the log shows the document needs a different engine, the build retries once w
 
 ## How the agent works
 
-Each request runs `codex exec` in a scratch folder with the `workspace-write` sandbox. The agent can read your workspace and run commands such as `pdftotext`, `pdftoppm`, and `latexmk`, but it can't modify your files. It returns a message, plus one complete `.tex` file when a document should change. Paperdesk saves that file with a revision check and a history snapshot. The agent's standing instructions are in [`.agents/skills/paperdesk/SKILL.md`](.agents/skills/paperdesk/SKILL.md).
+Each request runs `codex exec` in a scratch folder with the `workspace-write` sandbox. The agent can read your project and run commands such as `pdftotext`, `pdftoppm`, and `latexmk`, but it can't modify your files. It returns a message, plus one complete `.tex` file when a document should change. Paperdesk saves that file with a revision check and a history snapshot. The agent's standing instructions are in [`.agents/skills/paperdesk/SKILL.md`](.agents/skills/paperdesk/SKILL.md).
 
 Each request sends the open document, the conversation, your writing profile, and any files the agent reads to your Codex provider.
 
@@ -74,10 +79,10 @@ Each request sends the open document, the conversation, your writing profile, an
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WORKSPACE_ROOT` | Parent folder of this repo | Folder Paperdesk may read and write |
+| `PAPERDESK_LIBRARY` | `~/Documents/Paperdesk` | Where new projects are created |
 | `PORT` | `4317` | Server port (listens on 127.0.0.1 only) |
 | `CODEX_BIN` | `codex` | Codex CLI executable |
-| `PAPERDESK_DATA_DIR` | `.data` | Writing profile, edit examples, and uploads |
+| `PAPERDESK_DATA_DIR` | `.data` | Project list, writing profile, edit examples, and uploads |
 
 Each document folder keeps its save history in `.paperdesk/history/` (the last 80 versions).
 

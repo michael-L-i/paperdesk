@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { Workspace, atomicWrite, httpError } from './workspace.js';
+import { Workspace, atomicWrite, httpError, template, withLock } from './workspace.js';
 import { run } from './process.js';
 import { askAI } from './ai.js';
 import { gunzipSync } from 'node:zlib';
@@ -12,11 +12,12 @@ import { parseSourceMap, inverseSearch } from './synctex.js';
 import { hash } from './workspace.js';
 import { Uploads } from './uploads.js';
 import { compileLatex } from './latex.js';
+import { Projects } from './projects.js';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const root = path.resolve(process.env.WORKSPACE_ROOT || path.join(appDir, '..'));
-const workspace = new Workspace(root, appDir);
 const dataDir = path.resolve(process.env.PAPERDESK_DATA_DIR || path.join(appDir, '.data'));
 await fs.mkdir(dataDir, { recursive: true });
+const library = path.resolve(process.env.PAPERDESK_LIBRARY || path.join(os.homedir(), 'Documents', 'Paperdesk'));
+const projects = new Projects(path.join(dataDir, 'projects.json'), library);
 const uploads = await new Uploads(path.join(dataDir, 'uploads')).init();
 const app = express();
 const port = Number(process.env.PORT || 4317);
@@ -39,46 +40,56 @@ async function captureEdit(before, after, file) {
   while (endBefore > start && endAfter > start && before[endBefore - 1] === after[endAfter - 1]) { endBefore--; endAfter--; }
   const addition = after.slice(start, endAfter).trim();
   if (addition.length < 20) return;
-  await workspace.exclusive('style-examples', async () => {
+  await withLock('style-examples', async () => {
     const examples = await readJSON('examples.json', []);
     examples.push({ file, date: new Date().toISOString(), before: before.slice(start,endBefore).slice(0,2000), after: after.slice(start,endAfter).slice(0,2000) });
     await writeJSON('examples.json', examples.slice(-40));
   });
 }
-app.get('/api/workspace', async (req, res) => res.json({ root, files: await workspace.list() }));
-
-app.get('/api/directory', async (req, res) => {
-  const relative = req.query.path || '';
-  const dir = await workspace.resolve(relative);
+app.get('/api/projects', async (req, res) => res.json(await projects.list()));
+// Links an existing folder ({ path }) or creates a library project ({ name }).
+app.post('/api/projects', async (req, res) => res.json(req.body.path ? await projects.link(req.body.path) : await projects.create(req.body.name)));
+let choosingDirectory = false;
+app.post('/api/choose-directory', async (req, res) => {
+  if (process.platform !== 'darwin') throw httpError('The native folder picker requires macOS.');
+  if (choosingDirectory) throw httpError('The folder picker is already open.', 409);
+  choosingDirectory = true;
+  try {
+    const { stdout } = await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(appDir, 'server/choose-directory.js')], { timeout: 600000 });
+    res.json(JSON.parse(stdout));
+  } finally { choosingDirectory = false; }
+});
+// Every file route is scoped to one project folder.
+const project = express.Router({ mergeParams: true });
+app.use('/api/projects/:project', project);
+project.use(async (req, res, next) => {
+  req.project = await projects.get(req.params.project);
+  req.ws = new Workspace(req.project.path, appDir);
+  next();
+});
+project.patch('/', async (req, res) => {
+  const { mainFile } = req.body;
+  if (mainFile !== undefined && (typeof mainFile !== 'string' || !mainFile.endsWith('.tex'))) throw httpError('Choose a .tex file.');
+  if (mainFile) await req.ws.resolve(mainFile);
+  res.json(await projects.open(req.project.id, mainFile ? { mainFile } : {}));
+});
+project.delete('/', async (req, res) => { await projects.remove(req.project.id); res.json({ ok: true }); });
+project.post('/reveal', async (req, res) => { await run('/usr/bin/open', ['-R', req.project.path]); res.json({ ok: true }); });
+project.get('/directory', async (req, res) => {
+  const { root } = req.ws, dir = await req.ws.resolve(req.query.path || '');
   const entries = await fs.readdir(dir, { withFileTypes: true });
-  res.json({ root, path: path.relative(root, dir), entries: entries
+  res.json({ path: path.relative(root, dir), entries: entries
     .filter(e => !e.name.startsWith('.') && !e.isSymbolicLink() && !['node_modules','dist'].includes(e.name) && path.join(dir,e.name) !== appDir)
     .filter(e => e.isDirectory() || /\.(tex|pdf)$/i.test(e.name))
     .map(e => ({ name: e.name, directory: e.isDirectory(), path: path.relative(root,path.join(dir,e.name)) }))
     .sort((a,b) => Number(b.directory)-Number(a.directory) || a.name.localeCompare(b.name)) });
 });
-let choosingDirectory = false;
-app.post('/api/choose-directory', async (req, res) => {
-  if (process.platform !== 'darwin') throw httpError('The native folder picker requires macOS.');
-  if (choosingDirectory) throw httpError('The folder picker is already open.', 409);
-  const initial = await workspace.resolve(req.body.path || '');
-  choosingDirectory = true;
-  try {
-    const { stdout } = await run('/usr/bin/osascript', ['-l', 'JavaScript', path.join(appDir, 'server/choose-directory.js'), initial], { timeout: 600000 });
-    const selected = JSON.parse(stdout);
-    if (selected.cancelled) return res.json({ cancelled: true });
-    const directory = await workspace.resolve(selected.path);
-    res.json({ path: path.relative(root, directory) });
-  } finally { choosingDirectory = false; }
-});
-app.post('/api/new-document', async (req, res) => {
-  const { directory = '', name = 'main.tex' } = req.body;
+project.post('/new-document', async (req, res) => {
+  const { name = 'main.tex' } = req.body;
   if (typeof name !== 'string' || path.basename(name) !== name || !name.endsWith('.tex')) throw httpError('Enter a .tex filename.');
-  const dir = await workspace.resolve(directory);
-  const file = path.join(dir, name);
-  const { template } = await import('./workspace.js');
-  await fs.writeFile(file, template, { flag:'wx' }).catch(e => { if(e.code==='EEXIST') throw httpError('That file already exists.',409); throw e; });
-  res.json(await workspace.read(path.relative(root,file)));
+  await req.ws.resolve(name, false);
+  await fs.writeFile(path.join(req.ws.root, name), template, { flag:'wx' }).catch(e => { if(e.code==='EEXIST') throw httpError('That file already exists.',409); throw e; });
+  res.json(await req.ws.read(name));
 });
 app.post('/api/uploads', express.raw({ type: () => true, limit: '50mb' }), async (req, res) => res.json(await uploads.add(req.query.name || '', req.body)));
 app.delete('/api/uploads/:id', async (req, res) => { await uploads.remove(req.params.id); res.json({ ok: true }); });
@@ -92,30 +103,29 @@ function startJob(fields, ask) {
   return job.id;
 }
 const size = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
-app.post('/api/task', async (req,res) => {
-  const { directory = '', instruction, path: primary, revision, attachments: ids = [], history = [] } = req.body;
+project.post('/task', async (req,res) => {
+  const { instruction, path: primary, revision, attachments: ids = [], history = [] } = req.body;
   if (typeof instruction !== 'string' || !instruction.trim() || instruction.length > 20000) throw httpError('Enter a request.');
   if (!Array.isArray(ids) || ids.length > 10) throw httpError('Attach up to 10 files.');
   if (!Array.isArray(history) || history.some(m => !['You', 'Agent'].includes(m?.role) || typeof m.text !== 'string')) throw httpError('Invalid conversation.');
   const attachments = ids.map(id => uploads.get(id));
-  const dir = await workspace.resolve(directory);
-  const entries = (await fs.readdir(dir, { withFileTypes: true })).filter(e => !e.name.startsWith('.'));
+  const { root } = req.ws;
+  const entries = (await fs.readdir(root, { withFileTypes: true })).filter(e => !e.name.startsWith('.'));
   // Describe the folder so the agent knows, e.g., that hw.pdf is built from hw.tex.
   const documents = {}, files = [];
   for (const e of entries) {
-    const relative = path.relative(root, path.join(dir, e.name));
     if (e.isDirectory()) { files.push(`- ${e.name}/`); continue; }
     if (!e.isFile()) continue;
-    const { size: bytes } = await fs.stat(path.join(dir, e.name));
-    if (e.name.endsWith('.tex') && bytes <= 1_000_000) documents[relative] = await workspace.read(relative);
+    const { size: bytes } = await fs.stat(path.join(root, e.name));
+    if (e.name.endsWith('.tex') && bytes <= 1_000_000) documents[e.name] = await req.ws.read(e.name);
     const source = e.name.replace(/\.pdf$/i, '.tex');
-    files.push(`- ${e.name} (${size(bytes)}${relative === primary ? ', open in the editor' : source !== e.name && entries.some(x => x.name === source) ? `, compiled from ${source}` : ''})`);
+    files.push(`- ${e.name} (${size(bytes)}${e.name === primary ? ', open in the editor' : source !== e.name && entries.some(x => x.name === source) ? `, compiled from ${source}` : ''})`);
   }
   const doc = primary ? documents[primary] : null;
   if (primary && (!doc || doc.revision !== revision)) throw httpError('The primary file changed. Reload it before asking the agent.',409);
   const style = await readStyle(), examples = await readJSON('examples.json', []);
-  res.json({ id: startJob({ directory, primary, documents }, job => askAI({
-    instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), workspace: root, folder: dir, files, primary: doc && path.basename(doc.path), attachments,
+  res.json({ id: startJob({ root, primary, documents }, job => askAI({
+    instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), folder: root, files, primary: doc && path.basename(doc.path), attachments,
     history: history.slice(-12).map(m => ({ role: m.role, text: m.text.slice(0, 4000) })), onActivity: activity => { job.activity = activity; },
   }).finally(() => { for (const id of ids) uploads.remove(id).catch(() => {}); })) });
 });
@@ -126,36 +136,34 @@ app.post('/api/tasks/:id/apply', async (req,res) => {
   if (!job.result.latex) return res.json({message:job.result.message});
   const name=job.result.filename || (job.primary ? path.basename(job.primary) : 'main.tex');
   if (path.basename(name)!==name || !name.endsWith('.tex')) throw httpError('The agent returned an invalid filename.');
-  const dir=await workspace.resolve(job.directory);
-  const file=path.join(dir,name), relative=path.relative(root,file);
-  const prior=job.documents[relative];
+  const ws=new Workspace(job.root,appDir);
+  const file=path.join(ws.root,name), relative=name, prior=job.documents[name];
   // A new .tex must not compile over an existing PDF, such as the original assignment.
   if (!prior && await fs.stat(file.replace(/\.tex$/,'.pdf')).then(() => true, () => false)) throw httpError('This filename would overwrite an existing PDF. Ask the agent to use another filename.');
-  if(prior) job.applied=await workspace.save(relative,job.result.latex,prior.revision,'ai');
+  if(prior) job.applied=await ws.save(relative,job.result.latex,prior.revision,'ai');
   else {
-    await workspace.resolve(relative,false);
+    await ws.resolve(relative,false);
     await fs.writeFile(file,job.result.latex,{flag:'wx'}).catch(e=>{if(e.code==='EEXIST')throw httpError('That file was created while the agent was working. No changes applied.',409);throw e;});
-    job.applied=await workspace.read(relative);
+    job.applied=await ws.read(relative);
   }
   delete job.applied.previous;
   res.json(job.applied);
 });
-app.get('/api/document', async (req, res) => res.json(await workspace.read(req.query.path)));
-app.post('/api/project', async (req, res) => res.json(await workspace.create(req.body.folder, req.body.source)));
-app.put('/api/document', async (req, res) => {
+project.get('/document', async (req, res) => res.json(await req.ws.read(req.query.path)));
+project.put('/document', async (req, res) => {
   const { path: file, text, revision, origin } = req.body;
   if (typeof text !== 'string' || typeof revision !== 'string' || text.length > 1_000_000) throw httpError('Invalid document.');
-  const saved = await workspace.save(file, text, revision, ['ai','restore'].includes(origin) ? origin : 'human');
+  const saved = await req.ws.save(file, text, revision, ['ai','restore'].includes(origin) ? origin : 'human');
   if (!['ai','restore'].includes(origin) && saved.previous !== undefined) await captureEdit(saved.previous, text, file);
   delete saved.previous; res.json(saved);
 });
-app.get('/api/pdf', async (req, res) => {
+project.get('/pdf', async (req, res) => {
   if (!String(req.query.path).toLowerCase().endsWith('.pdf')) throw httpError('Choose a PDF.');
-  const file = await workspace.resolve(req.query.path);
+  const file = await req.ws.resolve(req.query.path);
   res.type('pdf').sendFile(file);
 });
-app.post('/api/compile', async (req, res) => {
-  const relative = req.body.path;
+project.post('/compile', async (req, res) => {
+  const workspace = req.ws, { root } = workspace, relative = req.body.path;
   const result = await workspace.exclusive(relative, async () => {
     const doc = await workspace.read(relative);
     if (doc.revision !== req.body.revision) throw httpError('Save your latest changes before compiling.', 409);
@@ -189,8 +197,8 @@ app.post('/api/compile', async (req, res) => {
     } finally { await fs.rm(temp, { recursive: true, force: true }); }
   }); res.json(result);
 });
-app.post('/api/inverse-search', async (req,res) => {
-  const { path: primary, revision, page, x, y } = req.body;
+project.post('/inverse-search', async (req,res) => {
+  const workspace = req.ws, { root } = workspace, { path: primary, revision, page, x, y } = req.body;
   if (!Number.isInteger(page) || page<1 || !Number.isFinite(x) || !Number.isFinite(y) || x<0 || y<0) throw httpError('Invalid PDF location.');
   const result = await workspace.exclusive(primary,async()=>{
     const doc=await workspace.read(primary);
@@ -213,8 +221,8 @@ app.post('/api/inverse-search', async (req,res) => {
   });
   res.json(result);
 });
-app.get('/api/history', async (req, res) => {
-  const file = await workspace.resolve(req.query.path);
+project.get('/history', async (req, res) => {
+  const workspace = req.ws, { root } = workspace, file = await workspace.resolve(req.query.path);
   const history = path.join(path.dirname(file), '.paperdesk', 'history');
   await workspace.resolve(path.relative(root, history), false);
   let names = []; try { names = await fs.readdir(history); } catch(e) { if (e.code !== 'ENOENT') throw e; }
@@ -226,11 +234,11 @@ app.put('/api/style', async (req, res) => {
   if (typeof req.body.text !== 'string' || req.body.text.length > 20000) throw httpError('Invalid style profile.');
   await atomicWrite(stylePath, req.body.text); res.json({ ok: true });
 });
-app.delete('/api/style/examples', async (req, res) => { await workspace.exclusive('style-examples', () => writeJSON('examples.json', [])); res.json({ ok: true }); });
-app.post('/api/style/suggest', async (req, res) => {
+app.delete('/api/style/examples', async (req, res) => { await withLock('style-examples', () => writeJSON('examples.json', [])); res.json({ ok: true }); });
+project.post('/style/suggest', async (req, res) => {
   const { path: file, instruction, revision } = req.body;
   if (typeof instruction !== 'string' || instruction.length > 20000) throw httpError('Invalid request.');
-  const doc = await workspace.read(file);
+  const doc = await req.ws.read(file);
   if (doc.revision !== revision) throw httpError('Save before asking the agent.', 409);
   const style = await readStyle(), examples = await readJSON('examples.json', []);
   if (!examples.length) throw httpError('Write or revise some answers first. Human edits become examples after saving.');
@@ -246,4 +254,4 @@ if (process.env.NODE_ENV === 'production') {
   app.use(vite.middlewares);
 }
 app.use((e, req, res, next) => { console.error(e.message); res.status(e.status || (e.code === 'ENOENT' ? 404 : 500)).json({ error: e.message }); });
-app.listen(port, '127.0.0.1', () => console.log(`Paperdesk: http://localhost:${port}\nWorkspace: ${root}`));
+app.listen(port, '127.0.0.1', () => console.log(`Paperdesk: http://localhost:${port}\nLibrary: ${library}`));

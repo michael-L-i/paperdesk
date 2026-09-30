@@ -8,7 +8,7 @@ if ! command -v node >/dev/null 2>&1; then
     source "$HOME/.nvm/nvm.sh"
   fi
 fi
-if curl -fsS "http://127.0.0.1:${PORT:-4317}/api/workspace" >/dev/null 2>&1; then
+if curl -fsS "http://127.0.0.1:${PORT:-4317}/api/projects" >/dev/null 2>&1; then
   open "http://localhost:${PORT:-4317}"
   exit 0
 fi

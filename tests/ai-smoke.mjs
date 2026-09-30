@@ -12,7 +12,7 @@ try {
   for (const ext of ['tex','aux','log']) await fs.unlink(path.join(temp,'exam.'+ext));
   // Nothing is attached: the agent has to find and read the PDF in the folder itself.
   const activity = [];
-  const result = await askAI({instruction:'Convert the exam in this folder to editable LaTeX with blank solution space.',mode:'task',workspace:temp,folder:temp,files:['- exam.pdf (12 KB)'],onActivity:a=>activity.push(a)});
+  const result = await askAI({instruction:'Convert the exam in this folder to editable LaTeX with blank solution space.',mode:'task',folder:temp,files:['- exam.pdf (12 KB)'],onActivity:a=>activity.push(a)});
   assert.ok(activity.some(a=>a.includes('exam.pdf')), `The agent read exam.pdf: ${activity}`);
   assert.ok(result.filename.endsWith('.tex') && result.filename !== 'exam.tex', 'Must preserve the original exam.pdf');
   assert.match(result.latex,/\\begin\{document\}/);

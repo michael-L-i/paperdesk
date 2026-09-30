@@ -44,22 +44,24 @@ const originalPDF=await fs.readFile(path.join(root,'Import/exam.pdf'));
 const fake=path.join(root,'fake-codex.mjs');
 await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconsole.log(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'/bin/zsh -lc "pdftotext -layout exam.pdf -"'}}));\nawait new Promise(r=>setTimeout(r,2500));\nconst result={message:'Converted **exam.pdf**: solve $2x+3=11$.',latex:${JSON.stringify(latex)},style:'',filename:'exam_solutions.tex'};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
 await fs.chmod(fake,0o755);
-const server=spawn(process.execPath,['server/index.js'],{cwd:app,env:{...process.env,NODE_ENV:'production',WORKSPACE_ROOT:root,PAPERDESK_DATA_DIR:path.join(root,'.app-data'),PORT:String(port),CODEX_BIN:fake},stdio:'pipe'});
+const server=spawn(process.execPath,['server/index.js'],{cwd:app,env:{...process.env,NODE_ENV:'production',PAPERDESK_LIBRARY:path.join(root,'library'),PAPERDESK_DATA_DIR:path.join(root,'.app-data'),PORT:String(port),CODEX_BIN:fake},stdio:'pipe'});
 let browser,page;
 try {
-  for(let i=0;i<60;i++){try{if((await fetch(url+'/api/directory')).ok)break;}catch{}await new Promise(r=>setTimeout(r,250));}
+  for(let i=0;i<60;i++){try{if((await fetch(url+'/api/projects')).ok)break;}catch{}await new Promise(r=>setTimeout(r,250));}
   browser=await chromium.launch({executablePath:process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
   page=await browser.newPage({viewport:{width:1440,height:960},reducedMotion:'reduce'});
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   let chosenDirectory='Course';
-  await page.route('**/api/choose-directory',route=>route.fulfill({json:chosenDirectory === null ? {cancelled:true} : {path:chosenDirectory}}));
+  await page.route('**/api/choose-directory',route=>route.fulfill({json:chosenDirectory === null ? {cancelled:true} : {path:path.join(root,chosenDirectory)}}));
+  const openFolder=async()=>{await page.getByRole('button',{name:'New project'}).click();await page.getByRole('button',{name:'Open folder…'}).click();};
   await page.goto(url);
-  await page.getByRole('button',{name:'Choose directory',exact:true}).click();
+  await page.getByText('No projects yet.',{exact:false}).waitFor();
+  await openFolder();
   await page.locator('canvas[data-rendered=true]').first().waitFor({timeout:180000});
   assert.equal(await page.locator('iframe').count(),0);
   assert.equal(await page.getByLabel('Download PDF').count(),1);
   assert.equal(await page.locator('.right .panel-title>span').first().textContent(),'PDF · pdfLaTeX');
-  assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/main.tex');
+  assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'main.tex');
 
   // Select only part of the active source line: its background must not hide the highlight.
   const sourceLine=page.locator('.cm-line').filter({hasText:'Second target paragraph.'});
@@ -92,7 +94,7 @@ try {
     await page.waitForFunction(n=>document.querySelectorAll('.pdf-page canvas')[n-1]?.dataset.rendered==='true',pageNumber);
     const box=await canvas.boundingBox();
     await page.locator('.pdf-page').nth(pageNumber-1).locator('.pdf-text-layer[data-rendered=true]').waitFor();
-    const response=page.waitForResponse(r=>r.url().includes('/api/inverse-search'));
+    const response=page.waitForResponse(r=>r.url().endsWith('/inverse-search'));
     await page.locator('.pdf-page').nth(pageNumber-1).dblclick({position:{x:(+match[1]+ +match[3])/2/+pageXML[1]*box.width,y:(+match[2]+ +match[4])/2/+pageXML[2]*box.height}});
     const result=await response;
     assert.equal(result.status(),200,await result.text());
@@ -100,7 +102,7 @@ try {
     return result.json();
   }
   let inverseRequests=0;
-  page.on('request',r=>{if(r.url().includes('/api/inverse-search'))inverseRequests++;});
+  page.on('request',r=>{if(r.url().endsWith('/inverse-search'))inverseRequests++;});
   const selectable=page.locator('.pdf-page').nth(1).locator('.pdf-text-layer span').filter({hasText:'Second target paragraph.'});
   await selectable.scrollIntoViewIfNeeded();
   await selectable.click();
@@ -144,19 +146,19 @@ try {
   assert.equal(inverseRequests,0,'Selection gestures must not trigger inverse search');
   const firstJump=await clickPDFWord(2,'Second');
   assert.equal(inverseRequests,1,'Double-click jumps once');
-  assert.equal(firstJump.path,'Course/main.tex');
+  assert.equal(firstJump.path,'main.tex');
   assert.ok(firstJump.line===7||firstJump.line===8);
   // Selected text must be the actual source line in CodeMirror, not just an API result.
   await page.waitForFunction(()=>window.getSelection()?.toString().includes('Second'));
   assert.equal(await page.evaluate(()=>window.getSelection().toString()),longLatex.split('\n')[firstJump.line-1]);
   const includedJump=await clickPDFWord(3,'Included');
-  assert.equal(includedJump.path,'Course/parts/answer.tex');
+  assert.equal(includedJump.path,'parts/answer.tex');
   await page.waitForFunction(()=>document.querySelector('.left .panel-title')?.textContent==='answer.tex');
-  assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/main.tex','Included-file navigation retains the primary compile target');
+  assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'main.tex','Included-file navigation retains the primary compile target');
   await page.waitForFunction(()=>window.getSelection()?.toString()==='Included answer paragraph.');
   const includedBefore=await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8');
   const editedAt=Date.now();
-  const autoBuild=page.waitForRequest(r=>r.url().endsWith('/api/compile'));
+  const autoBuild=page.waitForRequest(r=>r.url().endsWith('/compile'));
   await page.keyboard.insertText('Updated included answer.');
   await page.getByText('Saved',{exact:true}).waitFor();
   assert.equal(await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8'),'Updated included answer.\n');
@@ -170,13 +172,13 @@ try {
   assert.equal(await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8'),includedBefore);
   await fetch(url+'/api/style/examples',{method:'DELETE'});
 
-  await page.getByLabel('Primary TeX file').selectOption('Course/other.tex');
-  await page.getByLabel('Primary TeX file').selectOption('Course/main.tex');
+  await page.getByLabel('Primary TeX file').selectOption('other.tex');
+  await page.getByLabel('Primary TeX file').selectOption('main.tex');
   await page.locator('canvas[data-rendered=true]').first().waitFor();
   // Return to the first PDF page for independent scrolling checks below.
   await page.locator('.pdf-pages').evaluate(el=>{el.scrollTop=0;});
   let taskRequests=0;
-  page.on('request',r=>{if(r.url().endsWith('/api/task'))taskRequests++;});
+  page.on('request',r=>{if(r.url().endsWith('/task'))taskRequests++;});
   await page.getByLabel('Agent request').fill('Keep this draft.');
   await page.getByLabel('Agent request').press('Shift+Enter');
   await page.getByLabel('Agent request').press('Meta+Enter');
@@ -218,7 +220,7 @@ try {
   await page.getByRole('menuitemcheckbox',{name:'Auto-compile: on'}).click();
   await page.waitForFunction(()=>!document.querySelector('.pdf-pending'));
   let compileRequests=0;
-  page.on('request',r=>{if(r.url().endsWith('/api/compile'))compileRequests++;});
+  page.on('request',r=>{if(r.url().endsWith('/compile'))compileRequests++;});
   const editor=page.locator('.cm-content');
   await editor.click();await page.keyboard.press('Meta+End');await page.keyboard.insertText('\n% My phrasing: first isolate the variable, then simplify.');
   await page.getByText('Saved',{exact:true}).waitFor();
@@ -230,7 +232,7 @@ try {
   assert.ok(beforeRefresh.top>0);
   let releasePDF;
   const pdfGate=new Promise(resolve=>{releasePDF=resolve;});
-  await page.route('**/api/pdf?**',async route=>{await pdfGate;await route.continue();});
+  await page.route('**/pdf?**',async route=>{await pdfGate;await route.continue();});
   await page.getByRole('button',{name:'Compile',exact:true}).click();
   await page.waitForFunction(old=>document.querySelector('.pdf-pages').dataset.requestedUrl!==old,beforeRefresh.url);
   const whileLoading=await page.locator('.pdf-pages').evaluate(el=>({url:el.dataset.url,top:el.scrollTop,pixels:el.querySelector('canvas').toDataURL()}));
@@ -241,25 +243,39 @@ try {
   await page.waitForFunction(old=>document.querySelector('.pdf-pages').dataset.url!==old,beforeRefresh.url);
   assert.equal(await page.locator('.pdf-pages').evaluate(el=>el.scrollTop),beforeRefresh.top,'Swap preserves scroll offset');
   assert.equal(await page.locator('.pdf-pending').count(),0);
-  await page.unroute('**/api/pdf?**');
+  await page.unroute('**/pdf?**');
   assert.equal(compileRequests,1);
   await page.reload();
   await page.getByRole('button',{name:'More',exact:true}).click();
   await page.getByRole('menuitemcheckbox',{name:'Auto-compile: off'}).waitFor();
   await page.getByRole('menuitemcheckbox',{name:'Auto-compile: off'}).click();
-  await page.getByLabel('Primary TeX file').selectOption('Course/other.tex');
+  await page.getByLabel('Primary TeX file').selectOption('other.tex');
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('other.pdf'));
   await page.getByRole('button',{name:'More',exact:true}).click();
   await page.getByRole('button',{name:'Writing style',exact:true}).click();
   await page.getByLabel('Writing profile').fill('Use short sentences.');
   await page.getByRole('button',{name:'Save',exact:true}).click();
   await page.screenshot({path:'/tmp/paperdesk-simple.png',fullPage:true});
+  // Home lists projects; a cancelled picker stays home, and reopening restores the main file.
+  await page.getByRole('button',{name:'All projects'}).click();
   chosenDirectory=null;
-  await page.getByRole('button',{name:'Course',exact:true}).click();
-  await page.getByRole('button',{name:'Course',exact:true}).waitFor();
-  assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'Course/other.tex');
+  await openFolder();
+  await page.getByRole('link',{name:'Course',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='other.tex');
+  // A blank project lives in the library and compiles right away.
+  await page.getByRole('button',{name:'All projects'}).click();
+  await page.getByRole('button',{name:'New project'}).click();
+  await page.getByRole('button',{name:'Blank project'}).click();
+  await page.getByLabel('Project name').fill('Thesis');
+  await page.getByRole('button',{name:'Create',exact:true}).click();
+  await page.locator('canvas[data-rendered=true]').first().waitFor({timeout:180000});
+  assert.equal(await page.locator('.project-name').textContent(),'Thesis');
+  assert.ok((await fs.stat(path.join(root,'library/Thesis/main.pdf'))).isFile());
+  await page.getByRole('button',{name:'All projects'}).click();
+  await page.locator('.projects tbody a').first().waitFor();
+  assert.deepEqual(await page.locator('.projects tbody a').allTextContents(),['Thesis','Course']);
   chosenDirectory='Import';
-  await page.getByRole('button',{name:'Course',exact:true}).click();
+  await openFolder();
   await page.getByText('Select a .tex file or ask the agent to create one.').waitFor();
   const chooser=page.waitForEvent('filechooser');
   await page.getByRole('button',{name:'Attach files'}).click();
@@ -271,7 +287,7 @@ try {
   await page.getByRole('button',{name:'Remove exam.pdf'}).waitFor({state:'detached'});
   await page.locator('.thinking').filter({hasText:'Reading exam.pdf'}).waitFor();
   await page.locator('.message.user').filter({hasText:'Convert this PDF to LaTeX.'}).filter({hasText:'exam.pdf'}).waitFor();
-  await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='Import/exam_solutions.tex',{},{timeout:60000});
+  await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='exam_solutions.tex',{},{timeout:60000});
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('exam_solutions.pdf'),{},{timeout:180000});
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam.pdf')),originalPDF);
   const reply=page.locator('.message:not(.user) .markdown').filter({hasText:'Converted exam.pdf'});
@@ -281,15 +297,17 @@ try {
   assert.equal(await page.getByRole('button',{name:'Collapse chat history'}).count(),1,'Sending opens the thread');
   const codexCall=JSON.parse(await fs.readFile(path.join(root,'codex-call.json'),'utf8'));
   assert.ok(codexCall.args.includes('workspace-write'),'The agent can only write in its scratch directory');
-  assert.match(codexCall.prompt,/The user's folder is \S*Import, inside their workspace/,'The agent is pointed at the folder');
+  assert.match(codexCall.prompt,/The user's project folder is \S*Import\./,'The agent is pointed at the folder');
   assert.match(codexCall.prompt,/attached these files for this request:\n- exam\.pdf: \S*exam\.pdf/,'Uploads are passed by path');
   assert.deepEqual(await fs.readdir(path.join(root,'.app-data/uploads')),[],'Uploads are removed after the request');
   assert.match(await fs.readFile(path.join(root,'Import/exam_solutions.tex'),'utf8'),/Solve/);
   assert.equal((await(await fetch(url+'/api/style')).json()).examples,1,'AI output excluded from human style');
   await page.reload({waitUntil:'domcontentloaded'});
-  await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='Import/exam_solutions.tex');
-  const req=async(endpoint,body,method='POST')=>{const r=await fetch(url+'/api'+endpoint,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return{status:r.status,data:await r.json()};};
-  const doc=await(await fetch(url+'/api/document?path=Import/exam_solutions.tex')).json();
+  await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='exam_solutions.tex');
+  const importProject=(await(await fetch(url+'/api/projects')).json()).find(p=>p.name==='Import');
+  const projectURL=url+'/api/projects/'+importProject.id;
+  const req=async(endpoint,body,method='POST')=>{const r=await fetch(projectURL+endpoint,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return{status:r.status,data:await r.json()};};
+  const doc=await(await fetch(projectURL+'/document?path=exam_solutions.tex')).json();
   const goodPDF=await fs.readFile(path.join(root,'Import/exam_solutions.pdf'));
   const broken=await req('/document',{path:doc.path,revision:doc.revision,text:'\\documentclass{article}\\begin{document}\\badcommand\\end{document}'},'PUT');
   const failed=await req('/compile',{path:doc.path,revision:broken.data.revision});
@@ -299,11 +317,12 @@ try {
   assert.equal((await req('/document',{path:doc.path,revision:doc.revision,text:'lost'},'PUT')).status,409);
   assert.equal((await req('/inverse-search',{path:doc.path,revision:doc.revision,page:1,x:140,y:135})).status,409,'Stale source mappings are rejected');
   assert.equal((await req('/inverse-search',{path:doc.path,revision:doc.revision,page:0,x:0,y:0})).status,400);
-  assert.equal((await fetch(url+'/api/directory?path=..')).status,403);
-  assert.equal((await req('/task',{directory:'Import',instruction:'Summarize.',attachments:['missing']})).status,410);
-  assert.equal((await fetch(url+'/api/new-document',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({directory:'Import',name:'bad.tex'})})).status,403);
+  assert.equal((await fetch(projectURL+'/document?path=../Course/main.tex')).status,403,'Files outside the project are rejected');
+  assert.equal((await fetch(url+'/api/projects/missing/document?path=main.tex')).status,404);
+  assert.equal((await req('/task',{instruction:'Summarize.',attachments:['missing']})).status,410);
+  assert.equal((await fetch(projectURL+'/new-document',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({name:'bad.tex'})})).status,403);
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), directory selection, primary file switching, autosave, style memory, file attachments and PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
+  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, primary file switching, autosave, style memory, file attachments and PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
 }catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}

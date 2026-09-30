@@ -10,7 +10,7 @@ You need macOS, Node 22+, TeX Live, Poppler, and (for the agent) the Codex CLI. 
 git clone https://github.com/michael-L-i/paperdesk.git
 cd paperdesk
 npm install
-WORKSPACE_ROOT=~/Documents npm run dev
+npm run dev
 ```
 
 Open http://localhost:4317. `npm run dev` serves the UI through Vite; restart it after changing files in `server/`.
@@ -22,6 +22,7 @@ Open http://localhost:4317. `npm run dev` serves the UI through Vite; restart it
 | `server/index.js` | Express API: files, compile, SyncTeX, agent jobs |
 | `server/latex.js` | Engine detection and `latexmk` builds |
 | `server/ai.js` | Prompt and Codex CLI invocation |
+| `server/projects.js` | The project list and the Paperdesk library |
 | `server/workspace.js` | Path safety, saves, and history snapshots |
 | `server/uploads.js`, `server/synctex.js` | Attachments and PDF-to-source mapping |
 | `src/main.jsx`, `src/PdfPreview.jsx` | React UI and the PDF.js preview |

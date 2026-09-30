@@ -4,7 +4,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image } from 'lucide-react';
+import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image, House, Plus, Trash2 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -24,13 +24,12 @@ async function api(url, body, method = 'POST') {
   if (!res.ok) throw new Error(result.error || 'Request failed.');
   return result;
 }
-const fileURL = (path, version='') => '/api/pdf?path='+encodeURIComponent(path)+'&v='+version;
-function App() {
-  const [dir,setDir]=useState(null);
+function Editor({ id, go }) {
+  const [project,setProject]=useState(null), [dir,setDir]=useState(null);
   const [doc,setDoc]=useState(null), [text,setText]=useState(''), [status,setStatus]=useState('');
   const [autoCompile,setAutoCompile]=useState(()=>localStorage.getItem('paperdesk:autoCompile')!=='false');
   const [pdf,setPdf]=useState(null), [compiling,setCompiling]=useState(false), [error,setError]=useState('');
-  const [dialog,setDialog]=useState(null), [newName,setNewName]=useState('main.tex'), [busy,setBusy]=useState(false);
+  const [dialog,setDialog]=useState(null), [newName,setNewName]=useState('main.tex');
   const [historyOpen,setHistoryOpen]=useState(false), [prompt,setPrompt]=useState(''), [attachments,setAttachments]=useState([]);
   const [historyHeight,setHistoryHeight]=useState(180), [resizing,setResizing]=useState(false);
   const historyDrag=useRef(null), thread=useRef(null), composer=useRef(null);
@@ -41,13 +40,15 @@ function App() {
   state.current={doc,text,dir};
   const aiBusy=!!job || starting;
   const fail=e=>setError(e.message);
-  const draftKey=file=>'paperdesk:draft:'+state.current.dir?.root+':'+file;
+  const call=(url,body,method)=>api('/projects/'+id+url,body,method);
+  const fileURL=(path,version='')=>'/api/projects/'+id+'/pdf?path='+encodeURIComponent(path)+'&v='+version;
+  const draftKey=file=>'paperdesk:draft:'+id+':'+file;
   function accept(next, recover=false, makePrimary=true) {
     const draft=recover ? localStorage.getItem(draftKey(next.path)) : null;
     const value=draft ?? next.text;
     state.current.doc=next; state.current.text=value;
     setDoc(next);setText(value);setStatus(value===next.text?'Saved':'Unsaved');
-    if(makePrimary){attemptedBuild.current='';primaryFile.current=next.path;localStorage.setItem('paperdesk:primary',next.path);}
+    if(makePrimary){attemptedBuild.current='';primaryFile.current=next.path;call('',{mainFile:next.path},'PATCH').catch(()=>{});}
   }
   function change(value) {
     state.current.text=value;setText(value);setStatus('Unsaved');
@@ -59,7 +60,7 @@ function App() {
       if(!current.doc || current.doc.text===current.text) return current.doc;
       setStatus('Saving…');
       try {
-        const saved=await api('/document',{path:current.doc.path,text:current.text,revision:current.doc.revision,origin},'PUT');
+        const saved=await call('/document',{path:current.doc.path,text:current.text,revision:current.doc.revision,origin},'PUT');
         if(state.current.doc?.path===saved.path) {
           state.current.doc=saved;setDoc(saved);setStatus(state.current.text===saved.text?'Saved':'Unsaved');
           if(state.current.text===saved.text) localStorage.removeItem(draftKey(saved.path));
@@ -69,50 +70,30 @@ function App() {
     });
     saves.current=operation;return operation;
   }
-  async function chooseNativeDirectory() {
-    if(busy || aiBusy) return;
-    setBusy(true); setError('');
-    try {
-      await save();
-      const selected=await api('/choose-directory',{path:dir?.path || ''});
-      if(!selected.cancelled) await chooseDirectory(await api('/directory?path='+encodeURIComponent(selected.path)));
-    }catch(e){fail(e);}finally{setBusy(false);}
-  }
   async function refreshDirectory() {
-    const result=await api('/directory?path='+encodeURIComponent(state.current.dir.path));
+    const result=await call('/directory');
     setDir(result);state.current.dir=result;return result;
   }
   async function openFile(file, directory=state.current.dir) {
     await save();
-    const next=await api('/document?path='+encodeURIComponent(file));
+    const next=await call('/document?path='+encodeURIComponent(file));
     accept(next,true);
     const output=file.replace(/\.tex$/,'.pdf');
     setPdf(directory.entries.some(e=>e.path===output)?{path:output,version:Date.now(),revision:null}:null);
     setError('');
   }
-  async function chooseDirectory(directory) {
-    setBusy(true);
-    try {
-      await save();setDir(directory);state.current.dir=directory;
-      setDoc(null);setText('');primaryFile.current=null;state.current.doc=null;state.current.text='';setPdf(null);setStatus('');setMessages([]);
-      localStorage.setItem('paperdesk:directory',directory.path);
-      const files=directory.entries.filter(e=>!e.directory && e.name.endsWith('.tex'));
-      const file=files.find(e=>e.path===localStorage.getItem('paperdesk:primary')) || files.find(e=>e.name==='main.tex') || files[0];
-      if(file) await openFile(file.path,directory);
-      setDialog(null);setError('');
-    }catch(e){fail(e);}finally{setBusy(false);}
-  }
   useEffect(()=>{
     (async()=>{
-      const remembered=localStorage.getItem('paperdesk:directory');
-      if(remembered!==null) {
-        try {await chooseDirectory(await api('/directory?path='+encodeURIComponent(remembered)));}
-        catch {localStorage.removeItem('paperdesk:directory');}
-      }
-      const pending=sessionStorage.getItem('paperdesk:task');
-      if(pending) {try{setJob(JSON.parse(pending));}catch{}}
+      const opened=await call('',{},'PATCH');setProject(opened);
+      const directory=await refreshDirectory();
+      const files=directory.entries.filter(e=>!e.directory && e.name.endsWith('.tex'));
+      const file=files.find(e=>e.path===opened.mainFile) || files.find(e=>e.name==='main.tex') || files[0];
+      if(file) await openFile(file.path,directory);
+      try{const pending=JSON.parse(sessionStorage.getItem('paperdesk:task'));if(pending?.project===id)setJob(pending);}catch{}
     })().catch(fail);
   },[]);
+  useEffect(()=>{document.title=project?project.name+' · Paperdesk':'Paperdesk';},[project]);
+  async function home(){try{await save();go('/');}catch(e){fail(e);}}
   useEffect(()=>{
     if(!doc || text===doc.text || status==='Save failed' || aiBusy) return;
     const timer=setTimeout(()=>save().catch(fail),700);return()=>clearTimeout(timer);
@@ -122,10 +103,10 @@ function App() {
     const snapshot=state.current;
     if(snapshot.text!==snapshot.doc?.text || pdf.editorPath!==snapshot.doc?.path || pdf.editorRevision!==snapshot.doc?.revision){setError('The preview is out of date. Wait for compilation or click Compile before jumping to source.');return;}
     try {
-      const match=await api('/inverse-search',{path:pdf.path.replace(/\.pdf$/,'.tex'),revision:pdf.revision,...location});
+      const match=await call('/inverse-search',{path:pdf.path.replace(/\.pdf$/,'.tex'),revision:pdf.revision,...location});
       if(state.current.doc!==snapshot.doc || state.current.text!==snapshot.text)return;
       if(match.path!==snapshot.doc.path){
-        const next=await api('/document?path='+encodeURIComponent(match.path));
+        const next=await call('/document?path='+encodeURIComponent(match.path));
         if(state.current.doc!==snapshot.doc || state.current.text!==snapshot.text)return;
         accept(next,false,false);
         setPdf(p=>({...p,editorPath:next.path,editorRevision:next.revision}));
@@ -146,8 +127,8 @@ function App() {
     try {
       const saved=await save();
       attemptedBuild.current=saved.path+':'+saved.revision;
-      const primary=primaryFile.current===saved.path?saved:await api('/document?path='+encodeURIComponent(primaryFile.current));
-      const result=await api('/compile',{path:primary.path,revision:primary.revision});
+      const primary=primaryFile.current===saved.path?saved:await call('/document?path='+encodeURIComponent(primaryFile.current));
+      const result=await call('/compile',{path:primary.path,revision:primary.revision});
       if(primaryFile.current===primary.path) {setError('');setPdf({path:result.pdf,version:Date.now(),revision:result.revision,engine:result.engine,editorPath:saved.path,editorRevision:saved.revision});}
     }catch(e){fail(e);}finally{building.current=false;setCompiling(false);}
   }
@@ -185,9 +166,9 @@ function App() {
     setStarting(true);setError('');
     try {
       const saved=await save();
-      const primary=saved&&primaryFile.current!==saved.path?await api('/document?path='+encodeURIComponent(primaryFile.current)):saved;
-      const request=await api('/task',{directory:dir.path,path:primary?.path,revision:primary?.revision,attachments:attachments.map(a=>a.id),history:messages.map(({role,text})=>({role,text})),instruction:prompt});
-      const pending={id:request.id,directory:dir.path};
+      const primary=saved&&primaryFile.current!==saved.path?await call('/document?path='+encodeURIComponent(primaryFile.current)):saved;
+      const request=await call('/task',{path:primary?.path,revision:primary?.revision,attachments:attachments.map(a=>a.id),history:messages.map(({role,text})=>({role,text})),instruction:prompt});
+      const pending={id:request.id,project:id};
       setMessages(m=>[...m,{role:'You',text:prompt,files:attachments.map(({name,kind})=>({name,kind}))}]);setPrompt('');setAttachments([]);setJob(pending);setHistoryOpen(true);
       sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));
     }catch(e){fail(e);}finally{setStarting(false);}
@@ -219,7 +200,7 @@ function App() {
           if(result.result.latex) {
             const next=await api('/tasks/'+job.id+'/apply',{});
             if(stopped)return;
-            if(state.current.dir?.path===job.directory){accept(next);await refreshDirectory();setPdf(previous=>previous?.path===next.path.replace(/\.tex$/,'.pdf')?previous:null);}
+            accept(next);await refreshDirectory();setPdf(previous=>previous?.path===next.path.replace(/\.tex$/,'.pdf')?previous:null);
           }
           if(result.result.style){setStyle(result.result.style);setDialog('style');}
           setMessages(m=>[...m,{role:'Agent',text:result.result.message}]);setHistoryOpen(true);setJob(null);sessionStorage.removeItem('paperdesk:task');
@@ -230,19 +211,20 @@ function App() {
     poll();const timer=setInterval(poll,1200);return()=>{stopped=true;clearInterval(timer);setActivity('');};
   },[job]);
   async function createFile() {
-    try{await save();const next=await api('/new-document',{directory:dir.path,name:newName});accept(next);setPdf(null);await refreshDirectory();setDialog(null);}catch(e){fail(e);}
+    try{await save();const next=await call('/new-document',{name:newName});accept(next);setPdf(null);await refreshDirectory();setDialog(null);}catch(e){fail(e);}
   }
   async function suggestStyle(){
-    try{const saved=await save();const request=await api('/style/suggest',{path:saved.path,revision:saved.revision,instruction:'Suggest an updated writing profile from my edits.'});const pending={id:request.id,directory:dir.path};setJob(pending);sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));setDialog(null);setHistoryOpen(true);}catch(e){fail(e);}
+    try{const saved=await save();const request=await call('/style/suggest',{path:saved.path,revision:saved.revision,instruction:'Suggest an updated writing profile from my edits.'});const pending={id:request.id,project:id};setJob(pending);sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));setDialog(null);setHistoryOpen(true);}catch(e){fail(e);}
   }
-  async function loadHistory(){setMenu(false);try{setHistory(await api('/history?path='+encodeURIComponent(doc.path)));setDialog('history');}catch(e){fail(e);}}
+  async function loadHistory(){setMenu(false);try{setHistory(await call('/history?path='+encodeURIComponent(doc.path)));setDialog('history');}catch(e){fail(e);}}
   async function loadStyle(){setMenu(false);try{const s=await api('/style');setStyle(s.text);setExamples(s.examples);setDialog('style');}catch(e){fail(e);}}
-  async function reloadDisk(){try{const latest=await api('/document?path='+encodeURIComponent(doc.path));accept(latest);localStorage.removeItem(draftKey(latest.path));setError('');}catch(e){fail(e);}}
+  async function reloadDisk(){try{const latest=await call('/document?path='+encodeURIComponent(doc.path));accept(latest);localStorage.removeItem(draftKey(latest.path));setError('');}catch(e){fail(e);}}
   function downloadDraft(){const url=URL.createObjectURL(new Blob([text],{type:'text/plain'}));const a=document.createElement('a');a.href=url;a.download='draft.tex';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
   const texFiles=dir?.entries.filter(e=>!e.directory && e.name.endsWith('.tex'))||[];
   return <div className="app">
     <header>
-      <button className="directory" disabled={aiBusy||busy} onClick={chooseNativeDirectory} title={dir ? dir.root+'/'+dir.path : 'Choose directory'}><FolderOpen size={16}/>{busy ? 'Choosing…' : dir ? dir.path||dir.root.split('/').at(-1) : 'Choose directory'}</button>
+      <button aria-label="All projects" title="All projects" disabled={aiBusy} onClick={home}><House size={16}/></button>
+      <span className="project-name" title={project?.path}>{project?.name}</span>
       <span className="separator"/>
       <select aria-label="Primary TeX file" disabled={!texFiles.length||aiBusy} value={primaryFile.current||''} onChange={e=>openFile(e.target.value).catch(fail)}>{!doc&&<option value="">No .tex file</option>}{texFiles.map(e=><option key={e.path} value={e.path}>{e.name}</option>)}</select>
       <button title="New TeX file" aria-label="New TeX file" disabled={!dir||aiBusy} onClick={()=>{setNewName('main.tex');setDialog('new');}}><FilePlus size={15}/></button>
@@ -254,7 +236,7 @@ function App() {
     </header>
     {error&&<div className="error" role="alert"><details><summary>{error.split('\n')[0].slice(0,180)}</summary><pre>{error}</pre></details>{status==='Save failed'&&<><button onClick={downloadDraft}>Download draft</button><button onClick={reloadDisk}>Use disk version</button></>}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
     <main>
-      <section className="left"><div className="panel-title">{doc?.path.split('/').at(-1)||'LaTeX'}</div><div className="editor">{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{dir?'Select a .tex file or ask the agent to create one.':'Choose a directory.'}</div>}</div>
+      <section className="left"><div className="panel-title">{doc?.path.split('/').at(-1)||'LaTeX'}</div><div className="editor">{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{dir?'Select a .tex file or ask the agent to create one.':''}</div>}</div>
       <section className={'agent'+(resizing?' resizing':'')} onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(!e.dataTransfer.files.length||!dir)return;e.preventDefault();attach([...e.dataTransfer.files]);}}>
         {historyOpen&&<div className="agent-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);setResizing(true);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onLostPointerCapture={()=>{historyDrag.current=null;setResizing(false);}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/>}
         <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
@@ -278,5 +260,69 @@ function App() {
     {dialog==='history'&&<div className="history">{history.length?history.map(v=><button key={v.id} onClick={async()=>{try{await save();change(v.text);await save('restore');setDialog(null);}catch(e){fail(e);}}}>{new Date(v.date).toLocaleString()}<span>Restore</span></button>):<span className="muted">No saved versions.</span>}</div>}
     </section></div>}
   </div>;
+}
+const since=new Intl.RelativeTimeFormat(undefined,{numeric:'auto'});
+function ago(date) {
+  const seconds=(new Date(date)-Date.now())/1000;
+  for(const [unit,size] of [['year',31536000],['month',2592000],['week',604800],['day',86400],['hour',3600],['minute',60]])
+    if(Math.abs(seconds)>=size) return since.format(Math.round(seconds/size),unit);
+  return 'just now';
+}
+// Recent projects first, like Overleaf's dashboard.
+function Home({ go }) {
+  const [projects,setProjects]=useState(null), [query,setQuery]=useState(''), [error,setError]=useState('');
+  const [menu,setMenu]=useState(false), [naming,setNaming]=useState(false), [name,setName]=useState('');
+  const fail=e=>setError(e.message);
+  const load=()=>api('/projects').then(setProjects,fail);
+  useEffect(()=>{document.title='Paperdesk';load();},[]);
+  async function openFolder() {
+    setMenu(false);setError('');
+    try{const picked=await api('/choose-directory',{});if(!picked.cancelled)go('/p/'+(await api('/projects',{path:picked.path})).id);}catch(e){fail(e);}
+  }
+  async function create(e) {
+    e.preventDefault();
+    try{go('/p/'+(await api('/projects',{name})).id);}catch(e){fail(e);}
+  }
+  async function remove(p) {
+    if(p.kind==='library' && !confirm(`Move “${p.name}” to the Trash?`))return;
+    try{await api('/projects/'+p.id,{},'DELETE');await load();}catch(e){fail(e);}
+  }
+  const shown=projects?.filter(p=>p.name.toLowerCase().includes(query.trim().toLowerCase()));
+  return <div className="app">
+    <header>
+      <img src="/favicon.svg" alt="" width={18} height={18}/><strong className="brand">Paperdesk</strong>
+      <div className="spacer"/>
+      <div className="menu-wrap"><button className="primary" onClick={()=>setMenu(!menu)}><Plus size={14}/>New project</button>{menu&&<div className="menu">
+        <button onClick={()=>{setMenu(false);setName('');setNaming(true);}}>Blank project</button>
+        <button onClick={openFolder}>Open folder…</button>
+      </div>}</div>
+    </header>
+    {error&&<div className="error" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
+    <main className="projects"><div className="projects-inner">
+      <div className="projects-top"><h1>Projects</h1><input type="search" aria-label="Search projects" placeholder="Search projects" value={query} onChange={e=>setQuery(e.target.value)}/></div>
+      {shown&&(shown.length?<table>
+        <thead><tr><th>Name</th><th className="location">Location</th><th>Last opened</th><th/></tr></thead>
+        <tbody>{shown.map(p=><tr key={p.id}>
+          <td><a href={'/p/'+p.id} onClick={e=>{if(e.metaKey||e.ctrlKey)return;e.preventDefault();go('/p/'+p.id);}}>{p.name}</a></td>
+          <td className="location" title={p.path}>{p.missing?'Folder missing':p.kind==='library'?'Library':p.path.replace(/^\/Users\/[^/]+/,'~')}</td>
+          <td className="muted">{ago(p.opened)}</td>
+          <td className="row-actions">
+            <button aria-label={'Show '+p.name+' in Finder'} title="Show in Finder" disabled={p.missing} onClick={()=>api('/projects/'+p.id+'/reveal',{}).catch(fail)}><FolderOpen size={14}/></button>
+            <button aria-label={(p.kind==='library'?'Delete ':'Remove ')+p.name} title={p.kind==='library'?'Move to Trash':'Remove from list'} onClick={()=>remove(p)}>{p.kind==='library'?<Trash2 size={14}/>:<X size={14}/>}</button>
+          </td>
+        </tr>)}</tbody>
+      </table>:<p className="muted projects-empty">{projects.length?'No matching projects.':'No projects yet. Create one, or open a folder you already have.'}</p>)}
+    </div></main>
+    {naming&&<div className="backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label="New project"><div className="dialog-title"><strong>New project</strong><button aria-label="Close dialog" onClick={()=>setNaming(false)}><X size={16}/></button></div>
+      <form onSubmit={create}><input autoFocus aria-label="Project name" placeholder="Project name" value={name} onChange={e=>setName(e.target.value)}/><div className="dialog-bottom"><span className="muted">Saved in your Paperdesk library</span><button className="primary" type="submit" disabled={!name.trim()}>Create</button></div></form>
+    </section></div>}
+  </div>;
+}
+function App() {
+  const [route,setRoute]=useState(location.pathname);
+  useEffect(()=>{const pop=()=>setRoute(location.pathname);addEventListener('popstate',pop);return()=>removeEventListener('popstate',pop);},[]);
+  const go=url=>{history.pushState(null,'',url);setRoute(url);};
+  const id=route.match(/^\/p\/([\w-]+)$/)?.[1];
+  return id?<Editor key={id} id={id} go={go}/>:<Home go={go}/>;
 }
 createRoot(document.getElementById('root')).render(<App/>);
