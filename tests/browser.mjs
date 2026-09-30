@@ -53,6 +53,7 @@ try {
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   let chosenDirectory='Course';
   await page.route('**/api/choose-directory',route=>route.fulfill({json:chosenDirectory === null ? {cancelled:true} : {path:path.join(root,chosenDirectory)}}));
+  const mainFile=()=>page.locator('.tree-row.main').getAttribute('data-path');
   const openFolder=async()=>{await page.getByRole('button',{name:'New project'}).click();await page.getByRole('button',{name:'Open folder…'}).click();};
   await page.goto(url);
   await page.getByText('No projects yet.',{exact:false}).waitFor();
@@ -61,7 +62,7 @@ try {
   assert.equal(await page.locator('iframe').count(),0);
   assert.equal(await page.getByLabel('Download PDF').count(),1);
   assert.equal(await page.locator('.right .panel-title>span').first().textContent(),'PDF · pdfLaTeX');
-  assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'main.tex');
+  assert.equal(await mainFile(),'main.tex');
 
   // Select only part of the active source line: its background must not hide the highlight.
   const sourceLine=page.locator('.cm-line').filter({hasText:'Second target paragraph.'});
@@ -153,8 +154,8 @@ try {
   assert.equal(await page.evaluate(()=>window.getSelection().toString()),longLatex.split('\n')[firstJump.line-1]);
   const includedJump=await clickPDFWord(3,'Included');
   assert.equal(includedJump.path,'parts/answer.tex');
-  await page.waitForFunction(()=>document.querySelector('.left .panel-title')?.textContent==='answer.tex');
-  assert.equal(await page.getByLabel('Primary TeX file').inputValue(),'main.tex','Included-file navigation retains the primary compile target');
+  await page.waitForFunction(()=>document.querySelector('.left .panel-title')?.textContent==='parts/answer.tex');
+  assert.equal(await mainFile(),'main.tex','Included-file navigation retains the main document');
   await page.waitForFunction(()=>window.getSelection()?.toString()==='Included answer paragraph.');
   const includedBefore=await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8');
   const editedAt=Date.now();
@@ -171,9 +172,32 @@ try {
   await page.getByText('Saved',{exact:true}).waitFor();
   assert.equal(await fs.readFile(path.join(root,'Course/parts/answer.tex'),'utf8'),includedBefore);
   await fetch(url+'/api/style/examples',{method:'DELETE'});
+  // New files: a .bib or a subfolder chapter opens without changing the main document.
+  const newFile=async name=>{
+    await page.getByRole('button',{name:'New file',exact:true}).click();
+    await page.getByLabel('Filename').fill(name);await page.getByRole('button',{name:'Create',exact:true}).click();
+    await page.waitForFunction(n=>document.querySelector('.left .panel-title')?.textContent===n,name);
+  };
+  await newFile('refs.bib');
+  await page.keyboard.insertText('@misc{knuth, title={The TeXbook}}');
+  await page.getByText('Saved',{exact:true}).waitFor();
+  await newFile('parts/extra.tex');
+  assert.equal(await fs.readFile(path.join(root,'Course/parts/extra.tex'),'utf8'),'');
+  assert.equal(await mainFile(),'main.tex');
+  assert.equal((await(await fetch(url+'/api/style')).json()).examples,0,'Only .tex edits become style examples');
+  const upload=page.waitForEvent('filechooser');
+  await page.getByRole('button',{name:'Upload files'}).click();
+  await (await upload).setFiles(path.join(root,'Import/exam.pdf'));
+  await page.locator('.tree-row[data-path="exam.pdf"]').waitFor();
+  assert.deepEqual(await fs.readFile(path.join(root,'Course/exam.pdf')),originalPDF);
+  // Opening another document switches the PDF; the star switches it back.
+  await page.getByRole('button',{name:'other.tex',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.tree-row.main')?.dataset.path==='other.tex');
+  await page.getByRole('button',{name:'Set main.tex as main document'}).click();
+  assert.equal(await mainFile(),'main.tex');
 
-  await page.getByLabel('Primary TeX file').selectOption('other.tex');
-  await page.getByLabel('Primary TeX file').selectOption('main.tex');
+  await page.getByRole('button',{name:'other.tex',exact:true}).click();
+  await page.getByRole('button',{name:'main.tex',exact:true}).click();
   await page.locator('canvas[data-rendered=true]').first().waitFor();
   // Return to the first PDF page for independent scrolling checks below.
   await page.locator('.pdf-pages').evaluate(el=>{el.scrollTop=0;});
@@ -249,7 +273,7 @@ try {
   await page.getByRole('button',{name:'More',exact:true}).click();
   await page.getByRole('menuitemcheckbox',{name:'Auto-compile: off'}).waitFor();
   await page.getByRole('menuitemcheckbox',{name:'Auto-compile: off'}).click();
-  await page.getByLabel('Primary TeX file').selectOption('other.tex');
+  await page.getByRole('button',{name:'other.tex',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('other.pdf'));
   await page.getByRole('button',{name:'More',exact:true}).click();
   await page.getByRole('button',{name:'Writing style',exact:true}).click();
@@ -261,7 +285,7 @@ try {
   chosenDirectory=null;
   await openFolder();
   await page.getByRole('link',{name:'Course',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='other.tex');
+  await page.waitForFunction(()=>document.querySelector('.tree-row.main')?.dataset.path==='other.tex');
   // A blank project lives in the library and compiles right away.
   await page.getByRole('button',{name:'All projects'}).click();
   await page.getByRole('button',{name:'New project'}).click();
@@ -287,7 +311,7 @@ try {
   await page.getByRole('button',{name:'Remove exam.pdf'}).waitFor({state:'detached'});
   await page.locator('.thinking').filter({hasText:'Reading exam.pdf'}).waitFor();
   await page.locator('.message.user').filter({hasText:'Convert this PDF to LaTeX.'}).filter({hasText:'exam.pdf'}).waitFor();
-  await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='exam_solutions.tex',{},{timeout:60000});
+  await page.waitForFunction(()=>document.querySelector('.tree-row.main')?.dataset.path==='exam_solutions.tex',{},{timeout:60000});
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('exam_solutions.pdf'),{},{timeout:180000});
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam.pdf')),originalPDF);
   const reply=page.locator('.message:not(.user) .markdown').filter({hasText:'Converted exam.pdf'});
@@ -303,7 +327,7 @@ try {
   assert.match(await fs.readFile(path.join(root,'Import/exam_solutions.tex'),'utf8'),/Solve/);
   assert.equal((await(await fetch(url+'/api/style')).json()).examples,1,'AI output excluded from human style');
   await page.reload({waitUntil:'domcontentloaded'});
-  await page.waitForFunction(()=>document.querySelector('select[aria-label="Primary TeX file"]')?.value==='exam_solutions.tex');
+  await page.waitForFunction(()=>document.querySelector('.tree-row.main')?.dataset.path==='exam_solutions.tex');
   const importProject=(await(await fetch(url+'/api/projects')).json()).find(p=>p.name==='Import');
   const projectURL=url+'/api/projects/'+importProject.id;
   const req=async(endpoint,body,method='POST')=>{const r=await fetch(projectURL+endpoint,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return{status:r.status,data:await r.json()};};
@@ -323,6 +347,6 @@ try {
   assert.equal((await fetch(projectURL+'/new-document',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({name:'bad.tex'})})).status,403);
   await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, primary file switching, autosave, style memory, file attachments and PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
+  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, autosave, style memory, file attachments and PDF-only directory conversion, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
 }catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}

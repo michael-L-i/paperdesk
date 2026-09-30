@@ -36,3 +36,15 @@ test('import keeps original bytes and rolls back when destination conflicts', as
   assert.equal(await fs.readFile(path.join(root, 'Conflict/source.pdf'), 'utf8'), 'keep');
   await assert.rejects(fs.stat(path.join(root, 'Conflict/main.tex')), { code: 'ENOENT' });
 });
+test('list every project file except build output, and open only text files', async () => {
+  await fs.mkdir(path.join(root, 'chapters'));
+  for (const name of ['main.tex', 'main.aux', 'main.pdf', 'refs.bib', 'chapters/intro.tex', 'figure.png', '.hidden.tex']) await fs.writeFile(path.join(root, name), 'x');
+  assert.deepEqual(await ws.list(), ['chapters/intro.tex', 'figure.png', 'main.pdf', 'main.tex', 'refs.bib']);
+  assert.equal((await ws.read('refs.bib')).text, 'x');
+  await assert.rejects(ws.read('figure.png'), { status: 400 });
+});
+test('new file paths must be visible and inside the project', async () => {
+  assert.equal(await ws.prepare('figures/plot.png'), path.join(root, 'figures/plot.png'));
+  assert.ok((await fs.stat(path.join(root, 'figures'))).isDirectory());
+  for (const bad of ['.paperdesk/history/x.json', 'a//b.tex', '../escape.tex', 'figures/', undefined]) await assert.rejects(ws.prepare(bad), { status: 400 });
+});

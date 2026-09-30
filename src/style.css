@@ -104,3 +104,23 @@ main.projects{display:block;overflow:auto;padding:36px 24px}
 .row-actions button:hover{color:#303030}
 .projects-empty{padding:40px 0;text-align:center;font-size:12px}
 @media(max-width:700px){main.projects{padding:20px 12px}.projects .location{display:none}}
+
+/* File tree: the project's files; the star marks the main document. */
+main.with-tree{grid-template-columns:200px minmax(0,1fr) minmax(0,1fr)}
+.tree{display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid #dedede;background:#fafafa}
+.tree .panel-title{gap:0;padding-right:5px}
+.tree .panel-title button{padding:4px;color:#888}
+.tree-rows{flex:1;min-height:0;overflow:auto;padding:4px 0}
+.tree-row{display:flex;align-items:center;width:100%}
+.tree button:hover{background:transparent}
+.tree-row:hover{background:#efefef}
+.tree-row.active{background:#e8e8e8}
+button.tree-row,.tree-row>button:first-child{flex:1;min-width:0;justify-content:flex-start;gap:6px;padding:5px 8px;border-radius:0;font-size:12px}
+.tree-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-row svg{flex-shrink:0;color:#999}
+.tree-row>button:first-child:disabled{opacity:1;color:#aaa;cursor:default}
+.set-main{padding:4px;margin-right:5px;opacity:0}
+.tree-row:hover .set-main:not(:disabled),.set-main:focus-visible{opacity:1}
+.tree-row .main-star{margin-right:9px;color:#c9971c;fill:#c9971c}
+@media(max-width:700px){main.with-tree{grid-template-columns:150px minmax(0,1fr) minmax(0,1fr)}}
+@media(max-width:500px){main.with-tree{grid-template-columns:1fr}.tree{display:none}}

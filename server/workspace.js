@@ -12,6 +12,10 @@ export const template = String.raw`\documentclass[11pt]{article}
 \null
 \end{document}
 `;
+// Files the editor can open; everything else in a project is listed but read-only.
+export const textFile = name => /\.(tex|bib|sty|cls|bst|txt|md)$/i.test(name);
+// latexmk builds in a temp folder, but linked folders may hold other tools' output.
+const buildOutput = /\.(aux|log|fls|fdb_latexmk|synctex\.gz|out|toc|bbl|blg|bcf|run\.xml)$/i;
 export function httpError(message, status = 400) { return Object.assign(new Error(message), { status }); }
 export async function atomicWrite(file, content) {
   const tmp = `${file}.${crypto.randomUUID()}.tmp`;
@@ -55,15 +59,22 @@ export class Workspace {
         const full = path.join(dir, entry.name);
         if (full === this.appDir || entry.isSymbolicLink()) continue;
         if (entry.isDirectory()) await visit(full, depth + 1);
-        else if (/\.(tex|pdf)$/i.test(entry.name)) files.push(path.relative(this.root, full));
+        else if (!buildOutput.test(entry.name)) files.push(path.relative(this.root, full));
       }
     };
     await visit(this.root);
     return files.sort();
   }
   exclusive(key, fn) { return withLock(path.join(this.root, key), fn); }
+  // A path for a new file: visible, inside the project, with its folders created.
+  async prepare(relative) {
+    if (typeof relative !== 'string' || relative.split('/').some(part => !part || part.startsWith('.'))) throw httpError('Enter a valid filename.');
+    const file = await this.resolve(relative, false);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    return file;
+  }
   async read(relative) {
-    if (!relative.endsWith('.tex')) throw httpError('Choose a .tex file.');
+    if (!textFile(relative)) throw httpError('Choose a text file.');
     const file = await this.resolve(relative);
     const text = await fs.readFile(file, 'utf8');
     return { path: relative, text, revision: hash(text) };

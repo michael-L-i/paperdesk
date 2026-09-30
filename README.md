@@ -57,9 +57,13 @@ Paperdesk only reads and writes inside your projects' folders. Removing a linked
 | Turn auto-compile on or off | **More → Auto-compile** |
 | Jump from the PDF to the source | Double-click the PDF |
 | Force an engine | Put `% !TEX program = xelatex` (or `pdflatex`, `lualatex`) at the top of the file |
+| Change the main document | Click the star next to a `.tex` file in **Files** |
+| Add images or other files | Drag them onto **Files**, or click the upload button |
 | Send a chat message / add a line | Enter / Shift Enter |
 | Restore an earlier save | **More → History** |
 | Edit your writing profile | **More → Writing style** |
+
+The main document is the file that compiles and appears in the PDF pane. Opening a `.tex` file with `\documentclass` makes it the main document. Opening a chapter, a `.bib`, or another fragment keeps the current one. A `% !TEX root = ../main.tex` line in a fragment names its main document.
 
 Without a magic comment, Paperdesk picks the engine from the preamble:
 

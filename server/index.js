@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { Workspace, atomicWrite, httpError, template, withLock } from './workspace.js';
+import { Workspace, atomicWrite, httpError, template, textFile, withLock } from './workspace.js';
 import { run } from './process.js';
 import { askAI } from './ai.js';
 import { gunzipSync } from 'node:zlib';
@@ -75,21 +75,20 @@ project.patch('/', async (req, res) => {
 });
 project.delete('/', async (req, res) => { await projects.remove(req.project.id); res.json({ ok: true }); });
 project.post('/reveal', async (req, res) => { await run('/usr/bin/open', ['-R', req.project.path]); res.json({ ok: true }); });
-project.get('/directory', async (req, res) => {
-  const { root } = req.ws, dir = await req.ws.resolve(req.query.path || '');
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  res.json({ path: path.relative(root, dir), entries: entries
-    .filter(e => !e.name.startsWith('.') && !e.isSymbolicLink() && !['node_modules','dist'].includes(e.name) && path.join(dir,e.name) !== appDir)
-    .filter(e => e.isDirectory() || /\.(tex|pdf)$/i.test(e.name))
-    .map(e => ({ name: e.name, directory: e.isDirectory(), path: path.relative(root,path.join(dir,e.name)) }))
-    .sort((a,b) => Number(b.directory)-Number(a.directory) || a.name.localeCompare(b.name)) });
-});
+project.get('/files', async (req, res) => res.json(await req.ws.list()));
 project.post('/new-document', async (req, res) => {
-  const { name = 'main.tex' } = req.body;
-  if (typeof name !== 'string' || path.basename(name) !== name || !name.endsWith('.tex')) throw httpError('Enter a .tex filename.');
-  await req.ws.resolve(name, false);
-  await fs.writeFile(path.join(req.ws.root, name), template, { flag:'wx' }).catch(e => { if(e.code==='EEXIST') throw httpError('That file already exists.',409); throw e; });
-  res.json(await req.ws.read(name));
+  const { name } = req.body;
+  if (typeof name !== 'string' || !textFile(name)) throw httpError('Use a text file type such as .tex or .bib.');
+  const file = await req.ws.prepare(name);
+  // Top-level .tex files start as documents; files in subfolders are usually \input fragments.
+  await fs.writeFile(file, name.endsWith('.tex') && !name.includes('/') ? template : '', { flag:'wx' }).catch(e => { if(e.code==='EEXIST') throw httpError('That file already exists.',409); throw e; });
+  res.json(await req.ws.read(path.relative(req.ws.root, file)));
+});
+project.post('/upload', express.raw({ type: () => true, limit: '50mb' }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || !req.body.length) throw httpError('The file is empty.');
+  const file = await req.ws.prepare(req.query.path);
+  await fs.writeFile(file, req.body, { flag:'wx' }).catch(e => { if(e.code==='EEXIST') throw httpError(`${req.query.path} already exists.`,409); throw e; });
+  res.json({ path: path.relative(req.ws.root, file) });
 });
 app.post('/api/uploads', express.raw({ type: () => true, limit: '50mb' }), async (req, res) => res.json(await uploads.add(req.query.name || '', req.body)));
 app.delete('/api/uploads/:id', async (req, res) => { await uploads.remove(req.params.id); res.json({ ok: true }); });
@@ -154,7 +153,7 @@ project.put('/document', async (req, res) => {
   const { path: file, text, revision, origin } = req.body;
   if (typeof text !== 'string' || typeof revision !== 'string' || text.length > 1_000_000) throw httpError('Invalid document.');
   const saved = await req.ws.save(file, text, revision, ['ai','restore'].includes(origin) ? origin : 'human');
-  if (!['ai','restore'].includes(origin) && saved.previous !== undefined) await captureEdit(saved.previous, text, file);
+  if (!['ai','restore'].includes(origin) && saved.previous !== undefined && file.endsWith('.tex')) await captureEdit(saved.previous, text, file);
   delete saved.previous; res.json(saved);
 });
 project.get('/pdf', async (req, res) => {
@@ -164,6 +163,7 @@ project.get('/pdf', async (req, res) => {
 });
 project.post('/compile', async (req, res) => {
   const workspace = req.ws, { root } = workspace, relative = req.body.path;
+  if (!String(relative).endsWith('.tex')) throw httpError('Choose a .tex file.');
   const result = await workspace.exclusive(relative, async () => {
     const doc = await workspace.read(relative);
     if (doc.revision !== req.body.revision) throw httpError('Save your latest changes before compiling.', 409);
