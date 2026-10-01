@@ -4,7 +4,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, ChevronRight, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image, House, Plus, Trash2, Star, Upload, PanelLeft, File, Folder, Square } from 'lucide-react';
+import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, ChevronRight, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image, House, Plus, Trash2, Star, Upload, PanelLeft, File, Folder, Square, Pencil } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -14,6 +14,7 @@ import './style.css';
 import PdfPreview from './PdfPreview.jsx';
 const extensions = [StreamLanguage.define(stex), EditorView.lineWrapping];
 const textFile = name => /\.(tex|bib|sty|cls|bst|txt|md)$/i.test(name);
+const imageFile = name => /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
 // The document a file belongs to: its `% !TEX root`, itself if it has \documentclass, else null.
 function documentRoot(file, text) {
   const magic = text.match(/^\s*%\s*!\s*TEX\s+root\s*=\s*(.+?)\s*$/im)?.[1];
@@ -34,6 +35,7 @@ async function api(url, body, method = 'POST') {
   return result;
 }
 // Folders start collapsed, except those leading to the open file. Dropped files upload into the folder under them.
+const dialogTitles = { new: 'New file', rename: 'Rename', style: 'Writing style', history: 'History' };
 function FileTree({ files, open, main, disabled, onOpen, onMain, onNew, onUpload, uploadInput }) {
   const [expanded,setExpanded]=useState(()=>new Set());
   useEffect(()=>{
@@ -58,7 +60,7 @@ function FileTree({ files, open, main, disabled, onOpen, onMain, onNew, onUpload
     }
     const file=node[name];
     return <div key={file} className={'tree-row'+(file===open?' active':'')+(file===main?' main':'')} data-path={file}>
-      <button style={indent} disabled={disabled||!textFile(file)} title={file} onClick={()=>onOpen(file)}>{textFile(file)?<FileText size={13}/>:<File size={13}/>}<span>{name}</span></button>
+      <button style={indent} disabled={disabled} title={file} onClick={()=>onOpen(file)}>{textFile(file)?<FileText size={13}/>:imageFile(file)?<Image size={13}/>:<File size={13}/>}<span>{name}</span></button>
       {file===main?<Star size={12} className="main-star" role="img" aria-label="Main document"/>:file.endsWith('.tex')&&<button className="set-main" aria-label={'Set '+file+' as main document'} title="Set as main document" disabled={disabled} onClick={()=>onMain(file)}><Star size={12}/></button>}
     </div>;
   });
@@ -71,8 +73,14 @@ function FileTree({ files, open, main, disabled, onOpen, onMain, onNew, onUpload
     <div className="tree-rows">{rows(tree,'',0)}</div>
   </nav>;
 }
+// Other files show in place of the editor, like Overleaf: images and PDFs as previews.
+function FilePane({ file, url }) {
+  if (imageFile(file)) return <div className="file-pane"><img src={url} alt={file}/></div>;
+  if (/\.pdf$/i.test(file)) return <div className="file-pane pdf"><PdfPreview key={url} url={url}/></div>;
+  return <div className="file-pane"><span className="muted">No preview for this file type.</span></div>;
+}
 function Editor({ id, go }) {
-  const [project,setProject]=useState(null), [files,setFiles]=useState(null), [mainFile,setMainFile]=useState(null);
+  const [project,setProject]=useState(null), [files,setFiles]=useState(null), [mainFile,setMainFile]=useState(null), [viewing,setViewing]=useState(null);
   const [treeOpen,setTreeOpen]=useState(()=>localStorage.getItem('paperdesk:tree')!=='false');
   const [doc,setDoc]=useState(null), [text,setText]=useState(''), [status,setStatus]=useState('');
   const [autoCompile,setAutoCompile]=useState(()=>localStorage.getItem('paperdesk:autoCompile')!=='false');
@@ -89,13 +97,13 @@ function Editor({ id, go }) {
   const aiBusy=!!job || starting;
   const fail=e=>setError(e.message);
   const call=(url,body,method)=>api('/projects/'+id+url,body,method);
-  const fileURL=(path,version='')=>'/api/projects/'+id+'/pdf?path='+encodeURIComponent(path)+'&v='+version;
+  const fileURL=(path,version='')=>'/api/projects/'+id+'/file?path='+encodeURIComponent(path)+'&v='+version;
   const draftKey=file=>'paperdesk:draft:'+id+':'+file;
   function accept(next, recover=false) {
     const draft=recover ? localStorage.getItem(draftKey(next.path)) : null;
     const value=draft ?? next.text;
     state.current.doc=next; state.current.text=value;
-    setDoc(next);setText(value);setStatus(value===next.text?'Saved':'Unsaved');
+    setDoc(next);setText(value);setStatus(value===next.text?'Saved':'Unsaved');setViewing(null);
   }
   // The main document is what compiles and shows in the PDF pane, whichever file is open.
   function setMain(file, list=state.current.files) {
@@ -275,6 +283,13 @@ function Editor({ id, go }) {
   async function createFile() {
     try{await save();const next=await call('/new-document',{name:newName.trim()});await refreshFiles();await openFile(next.path,false);setDialog(null);}catch(e){fail(e);}
   }
+  async function renameFile() {
+    try{const {path:to}=await call('/rename',{from:viewing,to:newName.trim()});setPdf(p=>p?.path===viewing?null:p);await refreshFiles();setViewing(to);setDialog(null);}catch(e){fail(e);}
+  }
+  async function deleteFile() {
+    if(!confirm(`Move ${viewing} to the Trash?`))return;
+    try{await call('/file?path='+encodeURIComponent(viewing),{},'DELETE');setPdf(p=>p?.path===viewing?null:p);setViewing(null);await refreshFiles();}catch(e){fail(e);}
+  }
   async function upload(list, folder='') {
     try {
       for(const file of list){
@@ -305,8 +320,13 @@ function Editor({ id, go }) {
     </header>
     {error&&<div className="error" role="alert"><details><summary>{error.split('\n')[0].slice(0,180)}</summary><pre>{error}</pre></details>{status==='Save failed'&&<><button onClick={downloadDraft}>Download draft</button><button onClick={reloadDisk}>Use disk version</button></>}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
     <main className={treeOpen?'with-tree':''}>
-      {treeOpen&&<FileTree files={files||[]} open={doc?.path} main={mainFile} disabled={aiBusy} onOpen={file=>openFile(file).catch(fail)} onMain={file=>{setError('');setMain(file);}} onNew={()=>{setNewName('');setDialog('new');}} onUpload={upload} uploadInput={uploadInput}/>}
-      <section className="left"><div className="panel-title">{doc?.path||'LaTeX'}</div><div className="editor">{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{files?'Select a .tex file or ask the agent to create one.':''}</div>}</div>
+      {treeOpen&&<FileTree files={files||[]} open={viewing||doc?.path} main={mainFile} disabled={aiBusy} onOpen={file=>{if(textFile(file))openFile(file).catch(fail);else setViewing(file);}} onMain={file=>{setError('');setMain(file);}} onNew={()=>{setNewName('');setDialog('new');}} onUpload={upload} uploadInput={uploadInput}/>}
+      <section className="left"><div className="panel-title"><span>{viewing||doc?.path||'LaTeX'}</span>{viewing&&<>
+        <a href={fileURL(viewing)} download={viewing.split('/').at(-1)} aria-label="Download file" title="Download"><Download size={14}/></a>
+        <button aria-label="Rename file" title="Rename" disabled={aiBusy} onClick={()=>{setNewName(viewing);setDialog('rename');}}><Pencil size={14}/></button>
+        <button aria-label="Delete file" title="Move to Trash" disabled={aiBusy} onClick={deleteFile}><Trash2 size={14}/></button>
+        <button aria-label="Close file" title="Back to the editor" onClick={()=>setViewing(null)}><X size={14}/></button>
+      </>}</div>{viewing&&<FilePane file={viewing} url={fileURL(viewing)}/>}<div className="editor" hidden={!!viewing}>{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{files?'Select a .tex file or ask the agent to create one.':''}</div>}</div>
       <section className={'agent'+(resizing?' resizing':'')} onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(!e.dataTransfer.files.length||!files)return;e.preventDefault();attach([...e.dataTransfer.files]);}}>
         {historyOpen&&<div className="agent-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);setResizing(true);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onLostPointerCapture={()=>{historyDrag.current=null;setResizing(false);}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/>}
         <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
@@ -324,8 +344,9 @@ function Editor({ id, go }) {
       </section>
       <section className="right"><div className="panel-title"><span>PDF{pdf?.engine&&' · '+pdf.engine}</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview key={pdf.path} url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
     </main>
-    {dialog&&<div className="backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label={dialog==='new'?'New file':dialog==='style'?'Writing style':'History'}><div className="dialog-title"><strong>{dialog==='new'?'New file':dialog==='style'?'Writing style':'History'}</strong><button aria-label="Close dialog" onClick={()=>setDialog(null)}><X size={16}/></button></div>
+    {dialog&&<div className="backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label={dialogTitles[dialog]}><div className="dialog-title"><strong>{dialogTitles[dialog]}</strong><button aria-label="Close dialog" onClick={()=>setDialog(null)}><X size={16}/></button></div>
     {dialog==='new'&&<form onSubmit={e=>{e.preventDefault();createFile();}}><input autoFocus aria-label="Filename" placeholder="chapters/intro.tex or refs.bib" value={newName} onChange={e=>setNewName(e.target.value)}/><div className="dialog-bottom"><div className="spacer"/><button className="primary" type="submit" disabled={!newName.trim()}>Create</button></div></form>}
+    {dialog==='rename'&&<form onSubmit={e=>{e.preventDefault();renameFile();}}><input autoFocus aria-label="New name" value={newName} onChange={e=>setNewName(e.target.value)}/><div className="dialog-bottom"><div className="spacer"/><button className="primary" type="submit" disabled={!newName.trim()||newName.trim()===viewing}>Rename</button></div></form>}
     {dialog==='style'&&<><textarea aria-label="Writing profile" className="style-editor" value={style} onChange={e=>setStyle(e.target.value)} placeholder="Writing preferences"/><div className="dialog-bottom"><span className="muted">{examples} saved edit examples</span><button disabled={!doc||aiBusy||!examples} onClick={suggestStyle}>Suggest notes</button><button onClick={async()=>{try{await api('/style/examples',{},'DELETE');setExamples(0);}catch(e){fail(e);}}}>Clear examples</button><button className="primary" onClick={async()=>{try{await api('/style',{text:style},'PUT');setDialog(null);}catch(e){fail(e);}}}>Save</button></div></>}
     {dialog==='history'&&<div className="history">{history.length?history.map(v=><button key={v.id} onClick={async()=>{try{await save();change(v.text);await save('restore');setDialog(null);}catch(e){fail(e);}}}>{new Date(v.date).toLocaleString()}<span>Restore</span></button>):<span className="muted">No saved versions.</span>}</div>}
     </section></div>}

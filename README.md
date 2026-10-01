@@ -59,6 +59,7 @@ Paperdesk only reads and writes inside your projects' folders. Removing a linked
 | Force an engine | Put `% !TEX program = xelatex` (or `pdflatex`, `lualatex`) at the top of the file |
 | Change the main document | Click the star next to a `.tex` file in **Files** |
 | Add images or other files | Drag them onto **Files**, or click the upload button |
+| Preview, download, rename, or delete an image | Click it in **Files** (PDFs preview too; deleted files go to the Trash) |
 | Send a chat message / add a line | Enter / Shift Enter |
 | Stop the agent | Click the stop button that replaces send while it works |
 | Restore an earlier save | **More → History** |

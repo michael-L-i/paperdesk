@@ -190,6 +190,27 @@ try {
   await (await upload).setFiles(path.join(root,'Import/exam.pdf'));
   await page.locator('.tree-row[data-path="exam.pdf"]').waitFor();
   assert.deepEqual(await fs.readFile(path.join(root,'Course/exam.pdf')),originalPDF);
+  // Images open in a file pane with download, rename, and delete; the close button returns to the editor.
+  await fs.writeFile(path.join(root,'Course/plot.png'),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64'));
+  await page.getByRole('button',{name:'More',exact:true}).click();await page.getByRole('button',{name:'Refresh files'}).click();
+  await page.getByRole('button',{name:'plot.png',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.file-pane img')?.naturalWidth===1);
+  assert.equal(await page.locator('.left .panel-title').textContent(),'plot.png');
+  assert.equal(await page.getByLabel('Download file').getAttribute('download'),'plot.png');
+  await page.getByRole('button',{name:'Rename file'}).click();
+  await page.getByLabel('New name').fill('figures/plot.png');
+  await page.getByRole('button',{name:'Rename',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.left .panel-title')?.textContent==='figures/plot.png');
+  assert.ok((await fs.stat(path.join(root,'Course/figures/plot.png'))).isFile());
+  page.once('dialog',dialog=>dialog.accept());
+  await page.getByRole('button',{name:'Delete file'}).click();
+  await page.locator('.tree-row[data-path="figures/plot.png"]').waitFor({state:'detached'});
+  await assert.rejects(fs.stat(path.join(root,'Course/figures/plot.png')));
+  await page.getByRole('button',{name:'exam.pdf',exact:true}).click();
+  await page.locator('.file-pane canvas[data-rendered=true]').first().waitFor();
+  await page.getByRole('button',{name:'Close file'}).click();
+  assert.equal(await page.locator('.file-pane').count(),0);
+  assert.equal(await page.locator('.left .panel-title').textContent(),'parts/extra.tex');
   // Opening another document switches the PDF; the star switches it back.
   await page.getByRole('button',{name:'other.tex',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.tree-row.main')?.dataset.path==='other.tex');
@@ -256,7 +277,7 @@ try {
   assert.ok(beforeRefresh.top>0);
   let releasePDF;
   const pdfGate=new Promise(resolve=>{releasePDF=resolve;});
-  await page.route('**/pdf?**',async route=>{await pdfGate;await route.continue();});
+  await page.route('**/file?**',async route=>{await pdfGate;await route.continue();});
   await page.getByRole('button',{name:'Compile',exact:true}).click();
   await page.waitForFunction(old=>document.querySelector('.pdf-pages').dataset.requestedUrl!==old,beforeRefresh.url);
   const whileLoading=await page.locator('.pdf-pages').evaluate(el=>({url:el.dataset.url,top:el.scrollTop,pixels:el.querySelector('canvas').toDataURL()}));
@@ -267,7 +288,7 @@ try {
   await page.waitForFunction(old=>document.querySelector('.pdf-pages').dataset.url!==old,beforeRefresh.url);
   assert.equal(await page.locator('.pdf-pages').evaluate(el=>el.scrollTop),beforeRefresh.top,'Swap preserves scroll offset');
   assert.equal(await page.locator('.pdf-pending').count(),0);
-  await page.unroute('**/pdf?**');
+  await page.unroute('**/file?**');
   assert.equal(compileRequests,1);
   await page.reload();
   await page.getByRole('button',{name:'More',exact:true}).click();
@@ -368,6 +389,6 @@ try {
   assert.ok(tree.width>350 && tree.y+tree.height<=editorBox.y+1,'On a phone the file tree stacks above the editor');
   await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, autosave, style memory, stopping the agent, file attachments and PDF-only folder conversion with multi-file agent edits, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, missing project folders, phone layout, stale-write and origin protection.');
+  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, the image and PDF file pane with rename and delete, autosave, style memory, stopping the agent, file attachments and PDF-only folder conversion with multi-file agent edits, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, missing project folders, phone layout, stale-write and origin protection.');
 }catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}

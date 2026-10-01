@@ -144,11 +144,12 @@ project.put('/document', async (req, res) => {
   if (!['ai','restore'].includes(origin) && saved.previous !== undefined && file.endsWith('.tex')) await captureEdit(saved.previous, text, file);
   delete saved.previous; res.json(saved);
 });
-project.get('/pdf', async (req, res) => {
-  if (!String(req.query.path).toLowerCase().endsWith('.pdf')) throw httpError('Choose a PDF.');
-  const file = await req.ws.resolve(req.query.path);
-  res.type('pdf').sendFile(file);
+// Serves any project file; the sandbox keeps a file opened in its own tab, such as an SVG, from running scripts.
+project.get('/file', async (req, res) => {
+  res.set({ 'Content-Security-Policy': 'sandbox', 'X-Content-Type-Options': 'nosniff' }).sendFile(await req.ws.resolve(req.query.path));
 });
+project.post('/rename', async (req, res) => res.json({ path: await req.ws.rename(req.body.from, req.body.to) }));
+project.delete('/file', async (req, res) => { await req.ws.trash(req.query.path); res.json({ ok: true }); });
 project.post('/compile', async (req, res) => {
   const workspace = req.ws, { root } = workspace, relative = req.body.path;
   if (!String(relative).endsWith('.tex')) throw httpError('Choose a .tex file.');

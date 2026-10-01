@@ -68,3 +68,12 @@ test('apply agent edits to several files, or to none on any conflict', async () 
   const history = await fs.readdir(path.join(root, '.paperdesk/history'));
   assert.equal(JSON.parse(await fs.readFile(path.join(root, '.paperdesk/history', history[0]))).origin, 'ai');
 });
+test('rename a file into a new folder without overwriting', async () => {
+  await fs.writeFile(path.join(root, 'plot.png'), 'png');
+  await fs.writeFile(path.join(root, 'taken.png'), 'keep');
+  assert.equal(await ws.rename('plot.png', 'figures/plot.png'), 'figures/plot.png');
+  assert.equal(await fs.readFile(path.join(root, 'figures/plot.png'), 'utf8'), 'png');
+  await assert.rejects(ws.rename('figures/plot.png', 'taken.png'), { status: 409 });
+  await assert.rejects(ws.rename('figures/plot.png', '../escape.png'), { status: 403 });
+  assert.equal(await fs.readFile(path.join(root, 'taken.png'), 'utf8'), 'keep');
+});

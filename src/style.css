@@ -125,3 +125,11 @@ button.tree-row,.tree-row>button:first-child{flex:1;min-width:0;justify-content:
 @media(max-width:700px){main.with-tree{grid-template-columns:150px minmax(0,1fr) minmax(0,1fr)}}
 @media(max-width:500px){main.with-tree{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr) minmax(0,1fr)}.tree{max-height:28dvh;border-right:0;border-bottom:1px solid #ddd}}
 .message:not(.user) .message-files{justify-content:flex-start;margin-top:8px}
+
+/* File pane: images and PDFs preview in place of the editor. */
+.left .panel-title{gap:2px}
+.left .panel-title>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.left .panel-title :is(button,a){padding:4px;color:#888}
+.file-pane{flex:1;min-height:0;overflow:auto;display:flex;align-items:center;justify-content:center;padding:20px;background:#f4f4f4}
+.file-pane img{max-width:100%;max-height:100%;object-fit:contain;background:#fff;box-shadow:0 1px 4px #0002}
+.file-pane.pdf{display:block;padding:0}

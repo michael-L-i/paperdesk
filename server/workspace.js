@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { run } from './process.js';
 
 export const hash = text => crypto.createHash('sha256').update(text).digest('hex');
 export const template = String.raw`\documentclass[11pt]{article}
@@ -74,6 +75,19 @@ export class Workspace {
     const file = await this.resolve(relative, false);
     await fs.mkdir(path.dirname(file), { recursive: true });
     return file;
+  }
+  async rename(from, to) {
+    const source = await this.resolve(from);
+    if (source === this.root) throw httpError('Choose a file.');
+    if (await exists(await this.resolve(to, false))) throw httpError(`${to} already exists.`, 409);
+    await fs.rename(source, await this.prepare(to));
+    return to;
+  }
+  // Deleted files go to the macOS Trash, so a mistake can be undone.
+  async trash(relative) {
+    const file = await this.resolve(relative);
+    if (file === this.root) throw httpError('Choose a file.');
+    await run('/usr/bin/trash', [file]);
   }
   async read(relative) {
     if (!textFile(relative)) throw httpError('Choose a text file.');
