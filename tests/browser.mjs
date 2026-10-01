@@ -40,6 +40,8 @@ await fs.writeFile(path.join(root,'Import/exam.tex'),latex);
 await run('pdflatex',['-interaction=nonstopmode','exam.tex'],{cwd:path.join(root,'Import')});
 for(const ext of ['tex','aux','log'])await fs.unlink(path.join(root,'Import/exam.'+ext));
 const originalPDF=await fs.readFile(path.join(root,'Import/exam.pdf'));
+const pixelBase64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', pixel=Buffer.from(pixelBase64,'base64');
+await fs.writeFile(path.join(root,'board.png'),pixel);
 // Deterministic model fixture; PDF extraction/rendering, API jobs, application, and compilation remain real.
 const fake=path.join(root,'fake-codex.mjs');
 await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconsole.log(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'/bin/zsh -lc "pdftotext -layout exam.pdf -"'}}));\nawait new Promise(r=>setTimeout(r,input.endsWith('Take your time.')?120000:2500));\nconst result={message:'Converted **exam.pdf**: solve $2x+3=11$.',style:'',edits:[{path:'exam_solutions.tex',content:${JSON.stringify(latex)}},{path:'notes/summary.txt',content:'Solve for x.'}]};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
@@ -191,7 +193,7 @@ try {
   await page.locator('.tree-row[data-path="exam.pdf"]').waitFor();
   assert.deepEqual(await fs.readFile(path.join(root,'Course/exam.pdf')),originalPDF);
   // Images open in a file pane with download, rename, and delete; the close button returns to the editor.
-  await fs.writeFile(path.join(root,'Course/plot.png'),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==','base64'));
+  await fs.writeFile(path.join(root,'Course/plot.png'),pixel);
   await page.getByRole('button',{name:'More',exact:true}).click();await page.getByRole('button',{name:'Refresh files'}).click();
   await page.getByRole('button',{name:'plot.png',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.file-pane img')?.naturalWidth===1);
@@ -333,14 +335,24 @@ try {
   assert.equal(await page.getByRole('button',{name:'Stop agent'}).count(),0);
   const chooser=page.waitForEvent('filechooser');
   await page.getByRole('button',{name:'Attach files'}).click();
-  await (await chooser).setFiles(path.join(root,'Import/exam.pdf'));
-  await page.getByRole('button',{name:'Remove exam.pdf'}).waitFor();
-  await page.waitForFunction(()=>!document.querySelector('.attachment.uploading'));
+  await (await chooser).setFiles(path.join(root,'board.png'));
+  // Pasting the same image twice at once still gives each copy its own name.
+  await page.evaluate(base64=>{
+    for(let i=0;i<2;i++){
+      const data=new DataTransfer();data.items.add(new File([Uint8Array.from(atob(base64),c=>c.charCodeAt(0))],'image.png',{type:'image/png'}));
+      document.querySelector('textarea[aria-label="Agent request"]').dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
+    }
+  },pixelBase64);
+  await page.getByRole('button',{name:'Remove image-2.png'}).waitFor();
+  await page.waitForFunction(()=>document.querySelectorAll('.attachments .attachment:not(.uploading)').length===3);
+  assert.deepEqual((await page.locator('.attachments .attachment').allTextContents()).sort(),['board.png','image-2.png','image.png']);
+  for(const name of ['board.png','image.png','image-2.png']) assert.deepEqual(await fs.readFile(path.join(root,'Import',name)),pixel,'Attachments are copied into the project');
+  await page.locator('.tree-row[data-path="image-2.png"]').waitFor();
   await page.getByLabel('Agent request').fill('Convert this PDF to LaTeX.');
   await page.getByLabel('Agent request').press('Enter');
-  await page.getByRole('button',{name:'Remove exam.pdf'}).waitFor({state:'detached'});
+  await page.getByRole('button',{name:'Remove board.png'}).waitFor({state:'detached'});
   await page.locator('.thinking').filter({hasText:'Reading exam.pdf'}).waitFor();
-  await page.locator('.message.user').filter({hasText:'Convert this PDF to LaTeX.'}).filter({hasText:'exam.pdf'}).waitFor();
+  await page.locator('.message.user').filter({hasText:'Convert this PDF to LaTeX.'}).filter({hasText:'board.png'}).waitFor();
   await page.waitForFunction(()=>document.querySelector('.tree-row.main')?.dataset.path==='exam_solutions.tex',{},{timeout:60000});
   await page.waitForFunction(()=>document.querySelector('.pdf-pages')?.dataset.url.includes('exam_solutions.pdf'),{},{timeout:180000});
   assert.deepEqual(await fs.readFile(path.join(root,'Import/exam.pdf')),originalPDF);
@@ -352,8 +364,8 @@ try {
   const codexCall=JSON.parse(await fs.readFile(path.join(root,'codex-call.json'),'utf8'));
   assert.ok(codexCall.args.includes('workspace-write'),'The agent can only write in its scratch directory');
   assert.match(codexCall.prompt,/The user's project folder is \S*Import\./,'The agent is pointed at the folder');
-  assert.match(codexCall.prompt,/attached these files for this request:\n- exam\.pdf: \S*exam\.pdf/,'Uploads are passed by path');
-  assert.deepEqual(await fs.readdir(path.join(root,'.app-data/uploads')),[],'Uploads are removed after the request');
+  assert.match(codexCall.prompt,/attached these files for this request; they are saved in the project:\n- board\.png: \S*Import\/board\.png/,'Attachments are passed by their project path');
+  assert.deepEqual(codexCall.args.filter((a,i)=>codexCall.args[i-1]==='-i').map(f=>path.basename(f)).sort(),['board.png','image-2.png','image.png'],'Images go to Codex as image input');
   assert.match(await fs.readFile(path.join(root,'Import/exam_solutions.tex'),'utf8'),/Solve/);
   assert.equal(await fs.readFile(path.join(root,'Import/notes/summary.txt'),'utf8'),'Solve for x.','Edits can create files in subfolders');
   assert.deepEqual(await page.getByLabel('Changed files').locator('.attachment').allTextContents(),['exam_solutions.tex','notes/summary.txt']);
@@ -376,7 +388,7 @@ try {
   assert.equal((await req('/inverse-search',{path:doc.path,revision:doc.revision,page:0,x:0,y:0})).status,400);
   assert.equal((await fetch(projectURL+'/document?path=../Course/main.tex')).status,403,'Files outside the project are rejected');
   assert.equal((await fetch(url+'/api/projects/missing/document?path=main.tex')).status,404);
-  assert.equal((await req('/task',{instruction:'Summarize.',attachments:['missing']})).status,410);
+  assert.equal((await req('/task',{instruction:'Summarize.',attachments:['missing.png']})).status,404);
   assert.equal((await fetch(projectURL+'/new-document',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({name:'bad.tex'})})).status,403);
   await fs.mkdir(path.join(root,'Gone'));
   const gone=await(await fetch(url+'/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:path.join(root,'Gone')})})).json();
@@ -389,6 +401,6 @@ try {
   assert.ok(tree.width>350 && tree.y+tree.height<=editorBox.y+1,'On a phone the file tree stacks above the editor');
   await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, the image and PDF file pane with rename and delete, autosave, style memory, stopping the agent, file attachments and PDF-only folder conversion with multi-file agent edits, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, missing project folders, phone layout, stale-write and origin protection.');
+  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, the image and PDF file pane with rename and delete, autosave, style memory, stopping the agent, attachments copied into the project, and PDF-only folder conversion with multi-file agent edits, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, missing project folders, phone layout, stale-write and origin protection.');
 }catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}

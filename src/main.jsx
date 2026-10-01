@@ -211,29 +211,27 @@ function Editor({ id, go }) {
     window.addEventListener('keydown',key);window.addEventListener('beforeunload',leave);
     return()=>{window.removeEventListener('keydown',key);window.removeEventListener('beforeunload',leave);};
   });
-  // Files upload as soon as they are attached; each request sends their IDs.
-  function attach(files) {
-    for(const file of files){
+  // Attached files are copied into the project right away (image.png, then image-2.png, ...); requests send their paths.
+  // Removing one from the message keeps the copy in the project.
+  function attach(list) {
+    for(const file of list){
       const key=crypto.randomUUID();
       setAttachments(a=>[...a,{key,name:file.name}]);
-      request('/api/uploads?name='+encodeURIComponent(file.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file})
-        .then(async res=>{const result=await res.json();if(!res.ok)throw new Error(result.error||'Upload failed.');setAttachments(a=>a.map(x=>x.key===key?{...x,...result}:x));})
+      request('/api/projects/'+id+'/upload?unique=1&path='+encodeURIComponent(file.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file})
+        .then(async res=>{const result=await res.json();if(!res.ok)throw new Error(result.error||'Upload failed.');setAttachments(a=>a.map(x=>x.key===key?{...x,name:result.path,path:result.path}:x));refreshFiles().catch(()=>{});})
         .catch(e=>{setAttachments(a=>a.filter(x=>x.key!==key));fail(e);});
     }
   }
-  function detach(item) {
-    setAttachments(a=>a.filter(x=>x.key!==item.key));
-    if(item.id) api('/uploads/'+item.id,{},'DELETE').catch(()=>{});
-  }
-  const uploading=attachments.some(a=>!a.id);
+  const detach=item=>setAttachments(a=>a.filter(x=>x.key!==item.key));
+  const uploading=attachments.some(a=>!a.path);
   async function send() {
     if(!files || !prompt.trim() || aiBusy || uploading)return;
     setStarting(true);setError('');
     try {
       const saved=await save();
-      const request=await call('/task',{path:saved?.path,revision:saved?.revision,main:primaryFile.current,attachments:attachments.map(a=>a.id),history:messages.map(({role,text})=>({role,text})),instruction:prompt});
+      const request=await call('/task',{path:saved?.path,revision:saved?.revision,main:primaryFile.current,attachments:attachments.map(a=>a.path),history:messages.map(({role,text})=>({role,text})),instruction:prompt});
       const pending={id:request.id,project:id};
-      setMessages(m=>[...m,{role:'You',text:prompt,files:attachments.map(({name,kind})=>({name,kind}))}]);setPrompt('');setAttachments([]);setJob(pending);setHistoryOpen(true);
+      setMessages(m=>[...m,{role:'You',text:prompt,files:attachments.map(({name})=>({name}))}]);setPrompt('');setAttachments([]);setJob(pending);setHistoryOpen(true);
       sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));
     }catch(e){fail(e);}finally{setStarting(false);}
   }
@@ -332,11 +330,11 @@ function Editor({ id, go }) {
         <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
         <div className="thread" ref={thread} style={{height:historyOpen?historyHeight:0}} inert={!historyOpen}><div className="thread-inner">
           {!messages.length&&!aiBusy&&<p className="thread-empty">Ask about anything in this folder, request an edit, or attach a file.</p>}
-          {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{f.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}{m.role==='You'?<p>{m.text}</p>:<div className="markdown"><Markdown {...markdown}>{m.text}</Markdown></div>}{m.changed?.length>0&&<div className="message-files" aria-label="Changed files">{m.changed.map(f=><span key={f} className="attachment" title={'Changed '+f}><FileText size={12}/><span>{f}</span></span>)}</div>}</div>)}
+          {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{imageFile(f.name)?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}{m.role==='You'?<p>{m.text}</p>:<div className="markdown"><Markdown {...markdown}>{m.text}</Markdown></div>}{m.changed?.length>0&&<div className="message-files" aria-label="Changed files">{m.changed.map(f=><span key={f} className="attachment" title={'Changed '+f}><FileText size={12}/><span>{f}</span></span>)}</div>}</div>)}
           {aiBusy&&<div className="thinking" role="status" aria-label="Agent is working"><span className="dots"><i/><i/><i/></span>{activity}</div>}
         </div></div>
         <div className="composer" onClick={e=>{if(e.target===e.currentTarget)composer.current?.focus();}}>
-          {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a.key} className={'attachment'+(a.id?'':' uploading')} title={a.id?a.name:'Uploading '+a.name}>{a.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{a.name}</span><button aria-label={'Remove '+a.name} onClick={()=>detach(a)}><X size={12}/></button></span>)}</div>}
+          {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a.key} className={'attachment'+(a.path?'':' uploading')} title={a.path?'Saved in the project as '+a.path:'Adding '+a.name}>{imageFile(a.name)?<Image size={12}/>:<FileText size={12}/>}<span>{a.name}</span><button aria-label={'Remove '+a.name} onClick={()=>detach(a)}><X size={12}/></button></span>)}</div>}
           <textarea ref={composer} rows={1} aria-label="Agent request" placeholder="Ask anything or request an edit…" disabled={!files} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={composerKey} onPaste={e=>{if(e.clipboardData.files.length&&!e.clipboardData.getData('text/plain')){e.preventDefault();attach([...e.clipboardData.files]);}}}/>
           <div className="composer-actions"><button className="attach" aria-label="Attach files" title="Attach files" disabled={!files} onClick={()=>fileInput.current.click()}><Paperclip size={16}/></button><input ref={fileInput} type="file" multiple hidden onChange={e=>{attach([...e.target.files]);e.target.value='';}}/><div className="spacer"/>{job?<button className="send" aria-label="Stop agent" title="Stop" onClick={()=>{setActivity('Stopping…');api('/jobs/'+job.id+'/stop',{}).catch(fail);}}><Square size={11} fill="currentColor"/></button>:<button className="send" aria-label="Send to Agent" title="Send (Enter)" disabled={!prompt.trim()||!files||aiBusy||uploading} onClick={send}><ArrowUp size={16}/></button>}</div>
         </div>

@@ -15,7 +15,7 @@ Write LaTeX on the left and see the PDF on the right. Ask the agent to explain a
 - **SyncTeX.** Double-click the PDF to jump to the matching source line.
 - **An agent that sees your folder.** It reads PDFs, notes, and code itself, knows which PDF is built from which `.tex`, and remembers the conversation.
 - **Safe edits.** The agent can read your files but not modify them. Paperdesk applies the agent's edits all at once, with revision checks and history snapshots.
-- **A readable chat.** Replies render Markdown and KaTeX math. Attach files with the paperclip, paste, or drag and drop.
+- **A readable chat.** Replies render Markdown and KaTeX math. Attach files with the paperclip, paste, or drag and drop; they are copied into your project.
 - **Your writing style.** Your own edits become examples the agent follows. This is prompt memory, not model training.
 
 ## Requirements
@@ -88,7 +88,7 @@ Each request sends the open document, the conversation, your writing profile, an
 | `PAPERDESK_LIBRARY` | `~/Documents/Paperdesk` | Where new projects are created |
 | `PORT` | `4317` | Server port (listens on 127.0.0.1 only) |
 | `CODEX_BIN` | `codex` | Codex CLI executable |
-| `PAPERDESK_DATA_DIR` | `.data` | Project list, writing profile, edit examples, and uploads |
+| `PAPERDESK_DATA_DIR` | `.data` | Project list, writing profile, and edit examples |
 
 Each document folder keeps its save history in `.paperdesk/history/` (the last 80 versions).
 

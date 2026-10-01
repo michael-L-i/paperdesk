@@ -10,7 +10,6 @@ import { askAI } from './ai.js';
 import { gunzipSync } from 'node:zlib';
 import { parseSourceMap, inverseSearch } from './synctex.js';
 import { hash } from './workspace.js';
-import { Uploads } from './uploads.js';
 import { compileLatex } from './latex.js';
 import { Projects } from './projects.js';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,7 +17,6 @@ const dataDir = path.resolve(process.env.PAPERDESK_DATA_DIR || path.join(appDir,
 await fs.mkdir(dataDir, { recursive: true });
 const library = path.resolve(process.env.PAPERDESK_LIBRARY || path.join(os.homedir(), 'Documents', 'Paperdesk'));
 const projects = new Projects(path.join(dataDir, 'projects.json'), library);
-const uploads = await new Uploads(path.join(dataDir, 'uploads')).init();
 const app = express();
 const port = Number(process.env.PORT || 4317);
 const jobs = new Map();
@@ -89,12 +87,8 @@ project.post('/new-document', async (req, res) => {
 });
 project.post('/upload', express.raw({ type: () => true, limit: '50mb' }), async (req, res) => {
   if (!Buffer.isBuffer(req.body) || !req.body.length) throw httpError('The file is empty.');
-  const file = await req.ws.prepare(req.query.path);
-  await fs.writeFile(file, req.body, { flag:'wx' }).catch(e => { if(e.code==='EEXIST') throw httpError(`${req.query.path} already exists.`,409); throw e; });
-  res.json({ path: path.relative(req.ws.root, file) });
+  res.json({ path: await req.ws.add(req.query.path, req.body, req.query.unique === '1') });
 });
-app.post('/api/uploads', express.raw({ type: () => true, limit: '50mb' }), async (req, res) => res.json(await uploads.add(req.query.name || '', req.body)));
-app.delete('/api/uploads/:id', async (req, res) => { await uploads.remove(req.params.id); res.json({ ok: true }); });
 // One agent request at a time; the client polls /api/jobs/:id for the result and can stop it.
 function startJob(fields, ask) {
   if (aiBusy) throw httpError('The agent is already working.', 409);
@@ -106,11 +100,13 @@ function startJob(fields, ask) {
 }
 const size = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 project.post('/task', async (req,res) => {
-  const { instruction, path: open, main, revision, attachments: ids = [], history = [] } = req.body;
+  const { instruction, path: open, main, revision, attachments: names = [], history = [] } = req.body;
   if (typeof instruction !== 'string' || !instruction.trim() || instruction.length > 20000) throw httpError('Enter a request.');
-  if (!Array.isArray(ids) || ids.length > 10) throw httpError('Attach up to 10 files.');
+  if (!Array.isArray(names) || names.length > 10) throw httpError('Attach up to 10 files.');
   if (!Array.isArray(history) || history.some(m => !['You', 'Agent'].includes(m?.role) || typeof m.text !== 'string')) throw httpError('Invalid conversation.');
-  const attachments = ids.map(id => uploads.get(id));
+  // Attachments were copied into the project when they were added; images also go to Codex as image input.
+  const attachments = await Promise.all(names.map(async name => ({ name, kind: /\.(png|jpe?g|gif|webp)$/i.test(name) ? 'image' : 'file',
+    file: await req.ws.resolve(name).catch(e => { throw e.status ? e : httpError(`${name} is no longer in the project. Attach it again.`, 404); }) })));
   // Describe the project so the agent knows, e.g., that hw.pdf is built from hw.tex.
   // Text file revisions let the agent's edits be checked for conflicts when they are applied.
   const all = await req.ws.list(), revisions = {}, files = [];
@@ -128,7 +124,7 @@ project.post('/task', async (req,res) => {
   res.json({ id: startJob({ root: req.ws.root, revisions }, job => askAI({
     instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), folder: req.ws.root, files, open: doc?.path, main: typeof main === 'string' ? main : '', attachments,
     history: history.slice(-12).map(m => ({ role: m.role, text: m.text.slice(0, 4000) })), onActivity: activity => { job.activity = activity; }, signal: job.controller.signal,
-  }).finally(() => { for (const id of ids) uploads.remove(id).catch(() => {}); })) });
+  })) });
 });
 app.post('/api/tasks/:id/apply', async (req,res) => {
   const job=jobs.get(req.params.id);

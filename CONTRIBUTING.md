@@ -24,7 +24,7 @@ Open http://localhost:4317. `npm run dev` serves the UI through Vite; restart it
 | `server/ai.js` | Prompt and Codex CLI invocation |
 | `server/projects.js` | The project list and the Paperdesk library |
 | `server/workspace.js` | Path safety, saves, and history snapshots |
-| `server/uploads.js`, `server/synctex.js` | Attachments and PDF-to-source mapping |
+| `server/synctex.js` | PDF-to-source mapping |
 | `src/main.jsx`, `src/PdfPreview.jsx` | React UI and the PDF.js preview |
 | `tests/` | Unit tests (`*.test.js`) and browser/live checks (`*.mjs`) |
 

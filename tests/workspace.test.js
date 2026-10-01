@@ -77,3 +77,12 @@ test('rename a file into a new folder without overwriting', async () => {
   await assert.rejects(ws.rename('figures/plot.png', '../escape.png'), { status: 403 });
   assert.equal(await fs.readFile(path.join(root, 'taken.png'), 'utf8'), 'keep');
 });
+test('add new files, numbering taken names only when asked', async () => {
+  const pixel = Buffer.from('png');
+  const names = await Promise.all([ws.add('image.png', pixel, true), ws.add('image.png', pixel, true)]);
+  assert.deepEqual(names.sort(), ['image-2.png', 'image.png']);
+  assert.equal(await ws.add('notes', pixel, true), 'notes');
+  assert.equal(await ws.add('notes', pixel, true), 'notes-2');
+  await assert.rejects(ws.add('image.png', pixel), { status: 409 });
+  await assert.rejects(ws.add('.hidden.png', pixel, true), { status: 400 });
+});

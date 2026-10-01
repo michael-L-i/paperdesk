@@ -76,6 +76,15 @@ export class Workspace {
     await fs.mkdir(path.dirname(file), { recursive: true });
     return file;
   }
+  // Writes a new file. With `unique`, a taken name gets a number instead, as in image-2.png.
+  async add(relative, bytes, unique = false) {
+    const ext = path.extname(String(relative)), base = String(relative).slice(0, -ext.length || undefined);
+    for (let n = 1; ; n++) {
+      const name = n === 1 ? relative : `${base}-${n}${ext}`;
+      try { await fs.writeFile(await this.prepare(name), bytes, { flag: 'wx' }); return name; }
+      catch (e) { if (e.code !== 'EEXIST') throw e; if (!unique) throw httpError(`${relative} already exists.`, 409); }
+    }
+  }
   async rename(from, to) {
     const source = await this.resolve(from);
     if (source === this.root) throw httpError('Choose a file.');
