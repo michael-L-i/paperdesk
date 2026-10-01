@@ -41,7 +41,7 @@ export async function askAI({ instruction, mode, text = '', style = '', examples
         try { const event = JSON.parse(line); if (event.type === 'item.started' && event.item?.type === 'command_execution') onActivity?.(describeCommand(event.item.command)); } catch {}
       }
     };
-    await run(process.env.CODEX_BIN || 'codex', args, { cwd: temp, input: prompt, timeout: 600000, onOutput });
+    await run(process.env.CODEX_BIN || 'codex', args, { cwd: temp, input: prompt, timeout: 0, onOutput });
     const result = JSON.parse(await fs.readFile(path.join(temp, 'result.json'), 'utf8'));
     if (typeof result.message !== 'string' || typeof result.style !== 'string' || !Array.isArray(result.edits)) throw new Error('The agent returned an invalid response. No files were changed.');
     return result;

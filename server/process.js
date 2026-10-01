@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
+// A timeout of 0 means no time limit.
 export function run(command, args, { cwd, input, timeout = 180000, onOutput, env } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     let stdout = '', stderr = '', timedOut = false;
     const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
-    const timer = setTimeout(() => { timedOut = true; kill(); }, timeout);
+    const timer = timeout ? setTimeout(() => { timedOut = true; kill(); }, timeout) : null;
     // Streamed output goes to onOutput instead of accumulating.
     child.stdout.on('data', data => { if (onOutput) return onOutput(data.toString()); stdout += data; if (stdout.length > 8_000_000) kill(); });
     child.stderr.on('data', data => { stderr = (stderr + data).slice(-20000); });
