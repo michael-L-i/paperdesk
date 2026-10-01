@@ -348,8 +348,17 @@ try {
   assert.equal((await fetch(url+'/api/projects/missing/document?path=main.tex')).status,404);
   assert.equal((await req('/task',{instruction:'Summarize.',attachments:['missing']})).status,410);
   assert.equal((await fetch(projectURL+'/new-document',{method:'POST',headers:{Origin:'https://other.example','Content-Type':'application/json'},body:JSON.stringify({name:'bad.tex'})})).status,403);
-  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
+  await fs.mkdir(path.join(root,'Gone'));
+  const gone=await(await fetch(url+'/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:path.join(root,'Gone')})})).json();
+  await fs.rm(path.join(root,'Gone'),{recursive:true});
+  const goneFiles=await fetch(url+'/api/projects/'+gone.id+'/files');
+  assert.equal(goneFiles.status,404);assert.match((await goneFiles.json()).error,/moved or deleted/);
+  assert.equal((await fetch(url+'/api/projects/'+gone.id,{method:'DELETE'})).status,200,'A project with a missing folder can still be removed');
+  await page.setViewportSize({width:390,height:844});
+  const tree=await page.locator('.tree').boundingBox(), editorBox=await page.locator('.left').boundingBox();
+  assert.ok(tree.width>350 && tree.y+tree.height<=editorBox.y+1,'On a phone the file tree stacks above the editor');
+  await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, autosave, style memory, file attachments and PDF-only folder conversion with multi-file agent edits, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, stale-write and origin protection.');
+  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, autosave, style memory, file attachments and PDF-only folder conversion with multi-file agent edits, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, missing project folders, phone layout, stale-write and origin protection.');
 }catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}

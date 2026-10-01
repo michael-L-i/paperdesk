@@ -75,7 +75,10 @@ project.patch('/', async (req, res) => {
 });
 project.delete('/', async (req, res) => { await projects.remove(req.project.id); res.json({ ok: true }); });
 project.post('/reveal', async (req, res) => { await run('/usr/bin/open', ['-R', req.project.path]); res.json({ ok: true }); });
-project.get('/files', async (req, res) => res.json(await req.ws.list()));
+project.get('/files', async (req, res) => {
+  if (!await fs.stat(req.ws.root).then(s => s.isDirectory(), () => false)) throw httpError("This project's folder was moved or deleted. Remove it from your projects and open it again.", 404);
+  res.json(await req.ws.list());
+});
 project.post('/new-document', async (req, res) => {
   const { name } = req.body;
   if (typeof name !== 'string' || !textFile(name)) throw httpError('Use a text file type such as .tex or .bib.');
@@ -235,7 +238,9 @@ if (process.env.NODE_ENV === 'production') {
   app.get('/{*path}', (req, res) => res.sendFile(path.join(appDir, 'dist/index.html')));
 } else {
   const { createServer } = await import('vite');
-  const vite = await createServer({ root: appDir, server: { middlewareMode: true }, appType: 'spa' });
+  // Vite refuses every file path containing ':', which would block an app folder like "Fall 26:27".
+  // Requests reach Vite only after the loopback and origin checks above.
+  const vite = await createServer({ root: appDir, server: { middlewareMode: true, fs: { strict: !appDir.includes(':') } }, appType: 'spa' });
   app.use(vite.middlewares);
 }
 app.use((e, req, res, next) => { console.error(e.message); res.status(e.status || (e.code === 'ENOENT' ? 404 : 500)).json({ error: e.message }); });
