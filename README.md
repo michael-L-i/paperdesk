@@ -14,7 +14,7 @@ Write LaTeX on the left and see the PDF on the right. Ask the agent to explain a
 - **Any engine.** Builds use `latexmk` with pdfLaTeX, XeLaTeX, or LuaLaTeX, picked per document. BibTeX, biber, and reruns happen automatically.
 - **SyncTeX.** Double-click the PDF to jump to the matching source line.
 - **An agent that sees your folder.** It reads PDFs, notes, and code itself, knows which PDF is built from which `.tex`, and remembers the conversation.
-- **Safe edits.** The agent can read your files but not modify them. Paperdesk saves the agent's LaTeX with revision checks and history snapshots.
+- **Safe edits.** The agent can read your files but not modify them. Paperdesk applies the agent's edits all at once, with revision checks and history snapshots.
 - **A readable chat.** Replies render Markdown and KaTeX math. Attach files with the paperclip, paste, or drag and drop.
 - **Your writing style.** Your own edits become examples the agent follows. This is prompt memory, not model training.
 
@@ -75,7 +75,7 @@ If the log shows the document needs a different engine, the build retries once w
 
 ## How the agent works
 
-Each request runs `codex exec` in a scratch folder with the `workspace-write` sandbox. The agent can read your project and run commands such as `pdftotext`, `pdftoppm`, and `latexmk`, but it can't modify your files. It returns a message, plus one complete `.tex` file when a document should change. Paperdesk saves that file with a revision check and a history snapshot. The agent's standing instructions are in [`.agents/skills/paperdesk/SKILL.md`](.agents/skills/paperdesk/SKILL.md).
+Each request runs `codex exec` in a scratch folder with the `workspace-write` sandbox. The agent can read your project and run commands such as `pdftotext`, `pdftoppm`, and `latexmk`, but it can't modify your files. It returns a message, plus the complete new contents of each file it changes, such as a chapter and `refs.bib`. Paperdesk checks every file for changes made while the agent worked, then saves them all with history snapshots, or saves none. The agent's standing instructions are in [`.agents/skills/paperdesk/SKILL.md`](.agents/skills/paperdesk/SKILL.md).
 
 Each request sends the open document, the conversation, your writing profile, and any files the agent reads to your Codex provider.
 

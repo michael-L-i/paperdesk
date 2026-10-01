@@ -48,3 +48,23 @@ test('new file paths must be visible and inside the project', async () => {
   assert.ok((await fs.stat(path.join(root, 'figures'))).isDirectory());
   for (const bad of ['.paperdesk/history/x.json', 'a//b.tex', '../escape.tex', 'figures/', undefined]) await assert.rejects(ws.prepare(bad), { status: 400 });
 });
+test('apply agent edits to several files, or to none on any conflict', async () => {
+  await fs.mkdir(path.join(root, 'chapters'));
+  await fs.writeFile(path.join(root, 'main.tex'), 'main');
+  await fs.writeFile(path.join(root, 'chapters/intro.tex'), 'intro');
+  await fs.writeFile(path.join(root, 'exam.pdf'), '%PDF');
+  const revisions = { 'main.tex': (await ws.read('main.tex')).revision, 'chapters/intro.tex': (await ws.read('chapters/intro.tex')).revision };
+  // Changed on disk while the agent worked: nothing is written, not even the valid edits.
+  await fs.writeFile(path.join(root, 'chapters/intro.tex'), 'intro, edited by hand');
+  await assert.rejects(ws.apply([{ path: 'refs.bib', content: '@misc{a}' }, { path: 'chapters/intro.tex', content: 'new' }], revisions), { status: 409 });
+  await assert.rejects(fs.stat(path.join(root, 'refs.bib')), { code: 'ENOENT' });
+  await assert.rejects(ws.apply([{ path: 'exam.tex', content: 'x' }], revisions), /overwrite an existing PDF/);
+  await assert.rejects(ws.apply([{ path: 'main.pdf', content: 'x' }], revisions), { status: 400 });
+  await assert.rejects(ws.apply([{ path: '../escape.tex', content: 'x' }], revisions), { status: 400 });
+  await assert.rejects(ws.apply([{ path: 'exam.pdf', content: 'x' }], revisions), { status: 400 });
+  const applied = await ws.apply([{ path: 'main.tex', content: 'main v2' }, { path: 'figures/notes.txt', content: 'notes' }], revisions);
+  assert.deepEqual(applied.map(d => [d.path, d.text]), [['main.tex', 'main v2'], ['figures/notes.txt', 'notes']]);
+  assert.equal(applied[0].previous, undefined);
+  const history = await fs.readdir(path.join(root, '.paperdesk/history'));
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, '.paperdesk/history', history[0]))).origin, 'ai');
+});

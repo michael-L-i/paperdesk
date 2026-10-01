@@ -124,3 +124,4 @@ button.tree-row,.tree-row>button:first-child{flex:1;min-width:0;justify-content:
 .tree-row .main-star{margin-right:9px;color:#c9971c;fill:#c9971c}
 @media(max-width:700px){main.with-tree{grid-template-columns:150px minmax(0,1fr) minmax(0,1fr)}}
 @media(max-width:500px){main.with-tree{grid-template-columns:1fr}.tree{display:none}}
+.message:not(.user) .message-files{justify-content:flex-start;margin-top:8px}

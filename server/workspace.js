@@ -16,6 +16,8 @@ export const template = String.raw`\documentclass[11pt]{article}
 export const textFile = name => /\.(tex|bib|sty|cls|bst|txt|md)$/i.test(name);
 // latexmk builds in a temp folder, but linked folders may hold other tools' output.
 const buildOutput = /\.(aux|log|fls|fdb_latexmk|synctex\.gz|out|toc|bbl|blg|bcf|run\.xml)$/i;
+const visible = relative => typeof relative === 'string' && !relative.split('/').some(part => !part || part.startsWith('.'));
+const exists = file => fs.stat(file).then(() => true, () => false);
 export function httpError(message, status = 400) { return Object.assign(new Error(message), { status }); }
 export async function atomicWrite(file, content) {
   const tmp = `${file}.${crypto.randomUUID()}.tmp`;
@@ -68,7 +70,7 @@ export class Workspace {
   exclusive(key, fn) { return withLock(path.join(this.root, key), fn); }
   // A path for a new file: visible, inside the project, with its folders created.
   async prepare(relative) {
-    if (typeof relative !== 'string' || relative.split('/').some(part => !part || part.startsWith('.'))) throw httpError('Enter a valid filename.');
+    if (!visible(relative)) throw httpError('Enter a valid filename.');
     const file = await this.resolve(relative, false);
     await fs.mkdir(path.dirname(file), { recursive: true });
     return file;
@@ -95,6 +97,29 @@ export class Workspace {
       for (const old of entries.slice(0, Math.max(0, entries.length - 80))) await fs.unlink(path.join(meta, 'history', old));
       return { path: relative, text, revision: hash(text), previous: current.text };
     });
+  }
+  // Applies the agent's complete-file edits. Every edit is checked against the revisions
+  // seen when the request started before any file is written.
+  async apply(edits, revisions) {
+    if (!Array.isArray(edits) || edits.length > 50) throw httpError('The agent returned too many edits. No changes applied.');
+    const paths = new Set();
+    for (const { path: file, content } of edits) {
+      if (!visible(file) || !textFile(file) || typeof content !== 'string' || content.length > 1_000_000 || paths.has(file)) throw httpError(`The agent returned an invalid edit for ${file}. No changes applied.`);
+      paths.add(file);
+      const target = await this.resolve(file, false);
+      if (Object.hasOwn(revisions, file)) {
+        if ((await this.read(file)).revision !== revisions[file]) throw httpError(`${file} changed while the agent was working. No changes applied.`, 409);
+      } else if (await exists(target)) throw httpError(`${file} already exists. No changes applied.`, 409);
+      // A new .tex must not compile over an existing PDF, such as the original assignment.
+      else if (file.endsWith('.tex') && await exists(target.replace(/\.tex$/, '.pdf'))) throw httpError(`${file} would overwrite an existing PDF. Ask the agent to use another filename.`);
+    }
+    const applied = [];
+    for (const { path: file, content } of edits) {
+      if (Object.hasOwn(revisions, file)) { const { previous, ...saved } = await this.save(file, content, revisions[file], 'ai'); applied.push(saved); continue; }
+      await fs.writeFile(await this.prepare(file), content, { flag: 'wx' }).catch(e => { if (e.code === 'EEXIST') throw httpError(`${file} was created while the agent was working.`, 409); throw e; });
+      applied.push(await this.read(file));
+    }
+    return applied;
   }
   async create(folder, source) {
     if (!folder || folder === '.') throw httpError('Give this paper its own folder.');

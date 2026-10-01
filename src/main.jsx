@@ -221,8 +221,7 @@ function Editor({ id, go }) {
     setStarting(true);setError('');
     try {
       const saved=await save();
-      const primary=primaryFile.current&&primaryFile.current!==saved?.path?await call('/document?path='+encodeURIComponent(primaryFile.current)):saved;
-      const request=await call('/task',{path:primary?.path,revision:primary?.revision,attachments:attachments.map(a=>a.id),history:messages.map(({role,text})=>({role,text})),instruction:prompt});
+      const request=await call('/task',{path:saved?.path,revision:saved?.revision,main:primaryFile.current,attachments:attachments.map(a=>a.id),history:messages.map(({role,text})=>({role,text})),instruction:prompt});
       const pending={id:request.id,project:id};
       setMessages(m=>[...m,{role:'You',text:prompt,files:attachments.map(({name,kind})=>({name,kind}))}]);setPrompt('');setAttachments([]);setJob(pending);setHistoryOpen(true);
       sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));
@@ -252,13 +251,18 @@ function Editor({ id, go }) {
         if(result.status==='error')throw new Error(result.error);
         setActivity(result.activity||'');
         if(result.status==='done') {
-          if(result.result.latex) {
-            const next=await api('/tasks/'+job.id+'/apply',{});
+          let changed=[];
+          if(result.result.edits.length) {
+            changed=await api('/tasks/'+job.id+'/apply',{});
             if(stopped)return;
-            await refreshFiles();await openFile(next.path,false);
+            // Other files changed too, so the current PDF is out of date even if the open file was not edited.
+            setPdf(p=>p&&{...p,editorPath:null});
+            await refreshFiles();
+            const open=changed.find(d=>d.path===state.current.doc?.path);
+            if(open) accept(open); else await openFile(changed[0].path,false);
           }
           if(result.result.style){setStyle(result.result.style);setDialog('style');}
-          setMessages(m=>[...m,{role:'Agent',text:result.result.message}]);setHistoryOpen(true);setJob(null);sessionStorage.removeItem('paperdesk:task');
+          setMessages(m=>[...m,{role:'Agent',text:result.result.message,changed:changed.map(d=>d.path)}]);setHistoryOpen(true);setJob(null);sessionStorage.removeItem('paperdesk:task');
         }
       }catch(e){if(!stopped){fail(e);setJob(null);sessionStorage.removeItem('paperdesk:task');}}
       finally{fetching=false;}
@@ -305,7 +309,7 @@ function Editor({ id, go }) {
         <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
         <div className="thread" ref={thread} style={{height:historyOpen?historyHeight:0}} inert={!historyOpen}><div className="thread-inner">
           {!messages.length&&!aiBusy&&<p className="thread-empty">Ask about anything in this folder, request an edit, or attach a file.</p>}
-          {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{f.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}{m.role==='You'?<p>{m.text}</p>:<div className="markdown"><Markdown {...markdown}>{m.text}</Markdown></div>}</div>)}
+          {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{f.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}{m.role==='You'?<p>{m.text}</p>:<div className="markdown"><Markdown {...markdown}>{m.text}</Markdown></div>}{m.changed?.length>0&&<div className="message-files" aria-label="Changed files">{m.changed.map(f=><span key={f} className="attachment" title={'Changed '+f}><FileText size={12}/><span>{f}</span></span>)}</div>}</div>)}
           {aiBusy&&<div className="thinking" role="status" aria-label="Agent is working"><span className="dots"><i/><i/><i/></span>{activity}</div>}
         </div></div>
         <div className="composer" onClick={e=>{if(e.target===e.currentTarget)composer.current?.focus();}}>

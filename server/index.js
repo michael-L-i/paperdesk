@@ -103,50 +103,35 @@ function startJob(fields, ask) {
 }
 const size = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
 project.post('/task', async (req,res) => {
-  const { instruction, path: primary, revision, attachments: ids = [], history = [] } = req.body;
+  const { instruction, path: open, main, revision, attachments: ids = [], history = [] } = req.body;
   if (typeof instruction !== 'string' || !instruction.trim() || instruction.length > 20000) throw httpError('Enter a request.');
   if (!Array.isArray(ids) || ids.length > 10) throw httpError('Attach up to 10 files.');
   if (!Array.isArray(history) || history.some(m => !['You', 'Agent'].includes(m?.role) || typeof m.text !== 'string')) throw httpError('Invalid conversation.');
   const attachments = ids.map(id => uploads.get(id));
-  const { root } = req.ws;
-  const entries = (await fs.readdir(root, { withFileTypes: true })).filter(e => !e.name.startsWith('.'));
-  // Describe the folder so the agent knows, e.g., that hw.pdf is built from hw.tex.
-  const documents = {}, files = [];
-  for (const e of entries) {
-    if (e.isDirectory()) { files.push(`- ${e.name}/`); continue; }
-    if (!e.isFile()) continue;
-    const { size: bytes } = await fs.stat(path.join(root, e.name));
-    if (e.name.endsWith('.tex') && bytes <= 1_000_000) documents[e.name] = await req.ws.read(e.name);
-    const source = e.name.replace(/\.pdf$/i, '.tex');
-    files.push(`- ${e.name} (${size(bytes)}${e.name === primary ? ', open in the editor' : source !== e.name && entries.some(x => x.name === source) ? `, compiled from ${source}` : ''})`);
+  // Describe the project so the agent knows, e.g., that hw.pdf is built from hw.tex.
+  // Text file revisions let the agent's edits be checked for conflicts when they are applied.
+  const all = await req.ws.list(), revisions = {}, files = [];
+  let doc = null;
+  for (const file of all) {
+    const { size: bytes } = await fs.stat(path.join(req.ws.root, file));
+    if (textFile(file) && bytes <= 1_000_000) { const current = await req.ws.read(file); revisions[file] = current.revision; if (file === open) doc = current; }
+    const source = file.replace(/\.pdf$/i, '.tex');
+    const roles = [file === main && 'main document', file === open && 'open in the editor', source !== file && all.includes(source) && `compiled from ${source}`].filter(Boolean);
+    files.push(`- ${file} (${[size(bytes), ...roles].join(', ')})`);
   }
-  const doc = primary ? documents[primary] : null;
-  if (primary && (!doc || doc.revision !== revision)) throw httpError('The primary file changed. Reload it before asking the agent.',409);
+  if (files.length > 500) files.splice(500, Infinity, `- … and ${files.length - 500} more`);
+  if (open && (!doc || doc.revision !== revision)) throw httpError('The open file changed. Reload it before asking the agent.',409);
   const style = await readStyle(), examples = await readJSON('examples.json', []);
-  res.json({ id: startJob({ root, primary, documents }, job => askAI({
-    instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), folder: root, files, primary: doc && path.basename(doc.path), attachments,
+  res.json({ id: startJob({ root: req.ws.root, revisions }, job => askAI({
+    instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), folder: req.ws.root, files, open: doc?.path, main: typeof main === 'string' ? main : '', attachments,
     history: history.slice(-12).map(m => ({ role: m.role, text: m.text.slice(0, 4000) })), onActivity: activity => { job.activity = activity; },
   }).finally(() => { for (const id of ids) uploads.remove(id).catch(() => {}); })) });
 });
 app.post('/api/tasks/:id/apply', async (req,res) => {
   const job=jobs.get(req.params.id);
   if (!job || job.status !== 'done') throw httpError('The agent result is not ready.',409);
-  if (job.applied) return res.json(job.applied);
-  if (!job.result.latex) return res.json({message:job.result.message});
-  const name=job.result.filename || (job.primary ? path.basename(job.primary) : 'main.tex');
-  if (path.basename(name)!==name || !name.endsWith('.tex')) throw httpError('The agent returned an invalid filename.');
-  const ws=new Workspace(job.root,appDir);
-  const file=path.join(ws.root,name), relative=name, prior=job.documents[name];
-  // A new .tex must not compile over an existing PDF, such as the original assignment.
-  if (!prior && await fs.stat(file.replace(/\.tex$/,'.pdf')).then(() => true, () => false)) throw httpError('This filename would overwrite an existing PDF. Ask the agent to use another filename.');
-  if(prior) job.applied=await ws.save(relative,job.result.latex,prior.revision,'ai');
-  else {
-    await ws.resolve(relative,false);
-    await fs.writeFile(file,job.result.latex,{flag:'wx'}).catch(e=>{if(e.code==='EEXIST')throw httpError('That file was created while the agent was working. No changes applied.',409);throw e;});
-    job.applied=await ws.read(relative);
-  }
-  delete job.applied.previous;
-  res.json(job.applied);
+  job.applied ??= new Workspace(job.root,appDir).apply(job.result.edits,job.revisions);
+  res.json(await job.applied);
 });
 project.get('/document', async (req, res) => res.json(await req.ws.read(req.query.path)));
 project.put('/document', async (req, res) => {
@@ -244,7 +229,7 @@ project.post('/style/suggest', async (req, res) => {
   if (!examples.length) throw httpError('Write or revise some answers first. Human edits become examples after saving.');
   res.json({ id: startJob({ file, revision }, () => askAI({ instruction, mode: 'style', text: doc.text, style, examples })) });
 });
-app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {documents,...visible}=job; res.json(visible); });
+app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {revisions,applied,...visible}=job; res.json(visible); });
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(appDir, 'dist')));
   app.get('/{*path}', (req, res) => res.sendFile(path.join(appDir, 'dist/index.html')));
