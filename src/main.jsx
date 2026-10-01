@@ -25,8 +25,10 @@ const markdown = { remarkPlugins: [remarkGfm, remarkMath], rehypePlugins: [rehyp
   a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer"/>,
   table: ({ node, ...props }) => <div className="table-wrap"><table {...props}/></div>,
 } };
+// A network error means the server stopped, usually because its Terminal window was closed.
+const request = (url, init) => fetch(url, init).catch(() => { throw new Error("Can't reach Paperdesk. Its server stopped, which happens when the Terminal window running it is closed. Double-click Start Paperdesk.command to start it again, then retry."); });
 async function api(url, body, method = 'POST') {
-  const res = await fetch('/api' + url, body === undefined ? {} : { method, headers: {'Content-Type':'application/json'}, body:JSON.stringify(body) });
+  const res = await request('/api' + url, body === undefined ? {} : { method, headers: {'Content-Type':'application/json'}, body:JSON.stringify(body) });
   const result = await res.json();
   if (!res.ok) throw new Error(result.error || 'Request failed.');
   return result;
@@ -206,7 +208,7 @@ function Editor({ id, go }) {
     for(const file of files){
       const key=crypto.randomUUID();
       setAttachments(a=>[...a,{key,name:file.name}]);
-      fetch('/api/uploads?name='+encodeURIComponent(file.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file})
+      request('/api/uploads?name='+encodeURIComponent(file.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file})
         .then(async res=>{const result=await res.json();if(!res.ok)throw new Error(result.error||'Upload failed.');setAttachments(a=>a.map(x=>x.key===key?{...x,...result}:x));})
         .catch(e=>{setAttachments(a=>a.filter(x=>x.key!==key));fail(e);});
     }
@@ -275,7 +277,7 @@ function Editor({ id, go }) {
   async function upload(list, folder='') {
     try {
       for(const file of list){
-        const res=await fetch('/api/projects/'+id+'/upload?path='+encodeURIComponent(folder+file.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
+        const res=await request('/api/projects/'+id+'/upload?path='+encodeURIComponent(folder+file.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:file});
         if(!res.ok)throw new Error((await res.json()).error||'Upload failed.');
       }
     }catch(e){fail(e);}
