@@ -11,7 +11,7 @@ export function describeCommand(command) {
   return file ? 'Reading ' + file : 'Looking through files';
 }
 // Codex reads the project itself; it can only write in its scratch directory.
-export async function askAI({ instruction, mode, text = '', style = '', examples = [], folder, files = [], open, main, attachments = [], history = [], onActivity }) {
+export async function askAI({ instruction, mode, text = '', style = '', examples = [], folder, files = [], open, main, attachments = [], history = [], onActivity, signal }) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'paperdesk-ai-'));
   try {
     await fs.writeFile(path.join(temp, 'schema.json'), JSON.stringify(schema));
@@ -41,7 +41,7 @@ export async function askAI({ instruction, mode, text = '', style = '', examples
         try { const event = JSON.parse(line); if (event.type === 'item.started' && event.item?.type === 'command_execution') onActivity?.(describeCommand(event.item.command)); } catch {}
       }
     };
-    await run(process.env.CODEX_BIN || 'codex', args, { cwd: temp, input: prompt, timeout: 0, onOutput });
+    await run(process.env.CODEX_BIN || 'codex', args, { cwd: temp, input: prompt, timeout: 0, onOutput, signal });
     const result = JSON.parse(await fs.readFile(path.join(temp, 'result.json'), 'utf8'));
     if (typeof result.message !== 'string' || typeof result.style !== 'string' || !Array.isArray(result.edits)) throw new Error('The agent returned an invalid response. No files were changed.');
     return result;

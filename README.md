@@ -60,6 +60,7 @@ Paperdesk only reads and writes inside your projects' folders. Removing a linked
 | Change the main document | Click the star next to a `.tex` file in **Files** |
 | Add images or other files | Drag them onto **Files**, or click the upload button |
 | Send a chat message / add a line | Enter / Shift Enter |
+| Stop the agent | Click the stop button that replaces send while it works |
 | Restore an earlier save | **More → History** |
 | Edit your writing profile | **More → Writing style** |
 

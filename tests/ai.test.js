@@ -42,3 +42,20 @@ await fs.writeFile(process.argv[process.argv.indexOf('-o') + 1], JSON.stringify(
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+test('stop a running agent request', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paperdesk-ai-stop-'));
+  const fake = path.join(dir, 'fake-codex.mjs');
+  await fs.writeFile(fake, `#!${process.execPath}\nfor await (const chunk of process.stdin);\nprocess.stdout.write(JSON.stringify({ type: 'item.started', item: { type: 'command_execution', command: 'ls' } }) + '\\n');\nawait new Promise(r => setTimeout(r, 60000));\n`);
+  await fs.chmod(fake, 0o755);
+  const previous = process.env.CODEX_BIN;
+  process.env.CODEX_BIN = fake;
+  try {
+    const controller = new AbortController(), started = Date.now();
+    const request = askAI({ instruction: 'Take your time.', mode: 'task', onActivity: () => controller.abort(), signal: controller.signal });
+    await assert.rejects(request, /was stopped/);
+    assert.ok(Date.now() - started < 10000);
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = previous;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

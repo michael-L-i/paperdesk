@@ -95,13 +95,13 @@ project.post('/upload', express.raw({ type: () => true, limit: '50mb' }), async 
 });
 app.post('/api/uploads', express.raw({ type: () => true, limit: '50mb' }), async (req, res) => res.json(await uploads.add(req.query.name || '', req.body)));
 app.delete('/api/uploads/:id', async (req, res) => { await uploads.remove(req.params.id); res.json({ ok: true }); });
-// One agent request at a time; the client polls /api/jobs/:id for the result.
+// One agent request at a time; the client polls /api/jobs/:id for the result and can stop it.
 function startJob(fields, ask) {
   if (aiBusy) throw httpError('The agent is already working.', 409);
   for (const [key, old] of jobs) if (old.status !== 'running' && Date.now() - old.started > 3600000) jobs.delete(key);
-  const job = { id: crypto.randomUUID(), status: 'running', started: Date.now(), ...fields };
+  const job = { id: crypto.randomUUID(), status: 'running', started: Date.now(), controller: new AbortController(), ...fields };
   jobs.set(job.id, job); aiBusy = true;
-  ask(job).then(result => Object.assign(job, { status: 'done', result }), e => Object.assign(job, { status: 'error', error: e.message })).finally(() => { aiBusy = false; });
+  ask(job).then(result => Object.assign(job, { status: 'done', result }), e => Object.assign(job, job.controller.signal.aborted ? { status: 'stopped' } : { status: 'error', error: e.message })).finally(() => { aiBusy = false; });
   return job.id;
 }
 const size = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
@@ -127,7 +127,7 @@ project.post('/task', async (req,res) => {
   const style = await readStyle(), examples = await readJSON('examples.json', []);
   res.json({ id: startJob({ root: req.ws.root, revisions }, job => askAI({
     instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), folder: req.ws.root, files, open: doc?.path, main: typeof main === 'string' ? main : '', attachments,
-    history: history.slice(-12).map(m => ({ role: m.role, text: m.text.slice(0, 4000) })), onActivity: activity => { job.activity = activity; },
+    history: history.slice(-12).map(m => ({ role: m.role, text: m.text.slice(0, 4000) })), onActivity: activity => { job.activity = activity; }, signal: job.controller.signal,
   }).finally(() => { for (const id of ids) uploads.remove(id).catch(() => {}); })) });
 });
 app.post('/api/tasks/:id/apply', async (req,res) => {
@@ -230,9 +230,10 @@ project.post('/style/suggest', async (req, res) => {
   if (doc.revision !== revision) throw httpError('Save before asking the agent.', 409);
   const style = await readStyle(), examples = await readJSON('examples.json', []);
   if (!examples.length) throw httpError('Write or revise some answers first. Human edits become examples after saving.');
-  res.json({ id: startJob({ file, revision }, () => askAI({ instruction, mode: 'style', text: doc.text, style, examples })) });
+  res.json({ id: startJob({ file, revision }, job => askAI({ instruction, mode: 'style', text: doc.text, style, examples, signal: job.controller.signal })) });
 });
-app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {revisions,applied,...visible}=job; res.json(visible); });
+app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {revisions,applied,controller,...visible}=job; res.json(visible); });
+app.post('/api/jobs/:id/stop', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists.', 404); job.controller.abort(); res.json({ ok: true }); });
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(appDir, 'dist')));
   app.get('/{*path}', (req, res) => res.sendFile(path.join(appDir, 'dist/index.html')));

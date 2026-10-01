@@ -4,7 +4,7 @@ import CodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
 import { StreamLanguage } from '@codemirror/language';
 import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, ChevronRight, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image, House, Plus, Trash2, Star, Upload, PanelLeft, File, Folder } from 'lucide-react';
+import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, ChevronRight, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image, House, Plus, Trash2, Star, Upload, PanelLeft, File, Folder, Square } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -251,6 +251,7 @@ function Editor({ id, go }) {
         const result=await api('/jobs/'+job.id);
         if(stopped)return;
         if(result.status==='error')throw new Error(result.error);
+        if(result.status==='stopped'){setMessages(m=>[...m,{role:'Agent',text:'Stopped.'}]);setJob(null);sessionStorage.removeItem('paperdesk:task');return;}
         setActivity(result.activity||'');
         if(result.status==='done') {
           let changed=[];
@@ -317,7 +318,7 @@ function Editor({ id, go }) {
         <div className="composer" onClick={e=>{if(e.target===e.currentTarget)composer.current?.focus();}}>
           {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a.key} className={'attachment'+(a.id?'':' uploading')} title={a.id?a.name:'Uploading '+a.name}>{a.kind==='image'?<Image size={12}/>:<FileText size={12}/>}<span>{a.name}</span><button aria-label={'Remove '+a.name} onClick={()=>detach(a)}><X size={12}/></button></span>)}</div>}
           <textarea ref={composer} rows={1} aria-label="Agent request" placeholder="Ask anything or request an edit…" disabled={!files} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={composerKey} onPaste={e=>{if(e.clipboardData.files.length&&!e.clipboardData.getData('text/plain')){e.preventDefault();attach([...e.clipboardData.files]);}}}/>
-          <div className="composer-actions"><button className="attach" aria-label="Attach files" title="Attach files" disabled={!files} onClick={()=>fileInput.current.click()}><Paperclip size={16}/></button><input ref={fileInput} type="file" multiple hidden onChange={e=>{attach([...e.target.files]);e.target.value='';}}/><div className="spacer"/><button className="send" aria-label="Send to Agent" title="Send (Enter)" disabled={!prompt.trim()||!files||aiBusy||uploading} onClick={send}><ArrowUp size={16}/></button></div>
+          <div className="composer-actions"><button className="attach" aria-label="Attach files" title="Attach files" disabled={!files} onClick={()=>fileInput.current.click()}><Paperclip size={16}/></button><input ref={fileInput} type="file" multiple hidden onChange={e=>{attach([...e.target.files]);e.target.value='';}}/><div className="spacer"/>{job?<button className="send" aria-label="Stop agent" title="Stop" onClick={()=>{setActivity('Stopping…');api('/jobs/'+job.id+'/stop',{}).catch(fail);}}><Square size={11} fill="currentColor"/></button>:<button className="send" aria-label="Send to Agent" title="Send (Enter)" disabled={!prompt.trim()||!files||aiBusy||uploading} onClick={send}><ArrowUp size={16}/></button>}</div>
         </div>
       </section>
       </section>

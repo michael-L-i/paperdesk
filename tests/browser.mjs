@@ -42,7 +42,7 @@ for(const ext of ['tex','aux','log'])await fs.unlink(path.join(root,'Import/exam
 const originalPDF=await fs.readFile(path.join(root,'Import/exam.pdf'));
 // Deterministic model fixture; PDF extraction/rendering, API jobs, application, and compilation remain real.
 const fake=path.join(root,'fake-codex.mjs');
-await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconsole.log(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'/bin/zsh -lc "pdftotext -layout exam.pdf -"'}}));\nawait new Promise(r=>setTimeout(r,2500));\nconst result={message:'Converted **exam.pdf**: solve $2x+3=11$.',style:'',edits:[{path:'exam_solutions.tex',content:${JSON.stringify(latex)}},{path:'notes/summary.txt',content:'Solve for x.'}]};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
+await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconsole.log(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'/bin/zsh -lc "pdftotext -layout exam.pdf -"'}}));\nawait new Promise(r=>setTimeout(r,input.endsWith('Take your time.')?120000:2500));\nconst result={message:'Converted **exam.pdf**: solve $2x+3=11$.',style:'',edits:[{path:'exam_solutions.tex',content:${JSON.stringify(latex)}},{path:'notes/summary.txt',content:'Solve for x.'}]};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
 await fs.chmod(fake,0o755);
 const server=spawn(process.execPath,['server/index.js'],{cwd:app,env:{...process.env,NODE_ENV:'production',PAPERDESK_LIBRARY:path.join(root,'library'),PAPERDESK_DATA_DIR:path.join(root,'.app-data'),PORT:String(port),CODEX_BIN:fake},stdio:'pipe'});
 let browser,page;
@@ -301,6 +301,15 @@ try {
   chosenDirectory='Import';
   await openFolder();
   await page.getByText('Select a .tex file or ask the agent to create one.').waitFor();
+  // Stopping a long request kills it right away and frees the agent.
+  await page.getByLabel('Agent request').fill('Take your time.');
+  await page.getByLabel('Agent request').press('Enter');
+  await page.locator('.thinking').filter({hasText:'Reading exam.pdf'}).waitFor();
+  const stoppedAt=Date.now();
+  await page.getByRole('button',{name:'Stop agent'}).click();
+  await page.locator('.message:not(.user) .markdown').filter({hasText:'Stopped.'}).waitFor();
+  assert.ok(Date.now()-stoppedAt<10000,'Stop takes effect right away');
+  assert.equal(await page.getByRole('button',{name:'Stop agent'}).count(),0);
   const chooser=page.waitForEvent('filechooser');
   await page.getByRole('button',{name:'Attach files'}).click();
   await (await chooser).setFiles(path.join(root,'Import/exam.pdf'));
@@ -359,6 +368,6 @@ try {
   assert.ok(tree.width>350 && tree.y+tree.height<=editorBox.y+1,'On a phone the file tree stacks above the editor');
   await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
-  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, autosave, style memory, file attachments and PDF-only folder conversion with multi-file agent edits, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, missing project folders, phone layout, stale-write and origin protection.');
+  console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, autosave, style memory, stopping the agent, file attachments and PDF-only folder conversion with multi-file agent edits, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, missing project folders, phone layout, stale-write and origin protection.');
 }catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}
