@@ -13,10 +13,10 @@ const port=await new Promise(resolve=>{const probe=net.createServer();probe.list
 const latex=String.raw`\documentclass{article}\begin{document}Solve $2x+3=11$.\end{document}`;
 await fs.mkdir(path.join(root,'Course'));
 await fs.mkdir(path.join(root,'Import'));
-const longLatex=String.raw`\documentclass{article}
+const longLatex=String.raw`\documentclass{article}\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
 \begin{document}
-\section{First}
-Solve $2x+3=11$.
+\section{First}\label{sec:first}
+Solve $2x+3=11$. See Section~\ref{sec:third}, \hyperlink{detail}{details}, and~\cite{sample}. Visit \href{https://example.com/}{Example}.
 
 \newpage
 \section{Second}
@@ -24,13 +24,19 @@ Second target paragraph.
 
 Alpha first selectable line.\\
 Bravo middle selectable line.\\
-Charlie last selectable line.
+Charlie last selectable line.\par Back to Section~\ref{sec:first}.
 
 \newpage
-\section{Third}
+\section{Third}\label{sec:third}
 Third target paragraph.
 
 \input{parts/answer}
+\par\vspace{2cm}\noindent
+\hypertarget{detail}{Detailed destination.}
+\newpage
+\begin{thebibliography}{1}
+\bibitem{sample} A sample reference.
+\end{thebibliography}
 \end{document}`+'\n'+Array.from({length:150},(_,i)=>'% line '+i).join('\n');
 await fs.mkdir(path.join(root,'Course/parts'));
 await fs.writeFile(path.join(root,'Course/parts/answer.tex'),'Included answer paragraph.\n');
@@ -52,6 +58,7 @@ try {
   for(let i=0;i<60;i++){try{if((await fetch(url+'/api/projects')).ok)break;}catch{}await new Promise(r=>setTimeout(r,250));}
   browser=await chromium.launch({executablePath:process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
   page=await browser.newPage({viewport:{width:1440,height:960},reducedMotion:'reduce'});
+  page.setDefaultTimeout(15000);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   let chosenDirectory='Course';
   await page.route('**/api/choose-directory',route=>route.fulfill({json:chosenDirectory === null ? {cancelled:true} : {path:path.join(root,chosenDirectory)}}));
@@ -65,6 +72,43 @@ try {
   assert.equal(await page.getByLabel('Download PDF').count(),1);
   assert.equal(await page.locator('.right .panel-title>span').first().textContent(),'PDF · pdfLaTeX');
   assert.equal(await mainFile(),'main.tex');
+
+  // Real hyperref annotations jump to their exact target, including an unpainted page.
+  const initialURL=page.url();
+  const reference=page.getByRole('link',{name:'Go to reference 3',exact:true});
+  await reference.waitFor();
+  const editorBeforeLink=await page.locator('.cm-scroller').evaluate(el=>el.scrollTop);
+  assert.equal(await page.locator('.pdf-page').nth(2).locator('canvas').getAttribute('data-rendered'),null);
+  await reference.click();
+  await page.waitForFunction(()=>document.querySelectorAll('.pdf-page canvas')[2]?.dataset.rendered==='true');
+  const thirdTop=await page.locator('.pdf-pages').evaluate(el=>el.scrollTop);
+  assert.ok(thirdTop>1000,'Cross-reference scrolls down to page three');
+  const thirdHeading=await page.locator('.pdf-page').nth(2).locator('.pdf-text-layer span').filter({hasText:/^Third$/}).boundingBox();
+  const previewTop=(await page.locator('.pdf-pages').boundingBox()).y;
+  assert.ok(thirdHeading.y>=previewTop && thirdHeading.y<previewTop+60,'Destination appears near the top of the pane');
+  assert.equal(page.url(),initialURL,'Internal PDF links do not navigate the application');
+  assert.equal(await page.locator('.cm-scroller').evaluate(el=>el.scrollTop),editorBeforeLink);
+  await page.locator('.pdf-pages').evaluate(el=>{el.scrollTop=0;});
+  await page.getByRole('link',{name:'Go to reference details',exact:true}).click();
+  await page.waitForFunction(top=>document.querySelector('.pdf-pages').scrollTop>top+50,thirdTop);
+  const detailTop=await page.locator('.pdf-pages').evaluate(el=>el.scrollTop);
+  assert.ok(detailTop>thirdTop+50,'Targets within a page honor their vertical coordinate');
+  await page.screenshot({path:'/tmp/paperdesk-reference-jump.png'});
+  // Keyboard activation and links going backward work too.
+  await page.locator('.pdf-page').nth(1).getByRole('link',{name:'Go to reference 1',exact:true}).focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>document.querySelector('.pdf-pages').scrollTop<250);
+  await page.locator('.pdf-page').first().getByRole('link',{name:'Go to reference 1',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.pdf-page canvas')[3]?.dataset.rendered==='true');
+  await page.waitForFunction(top=>document.querySelector('.pdf-pages').scrollTop>top,detailTop);
+  assert.ok(await page.locator('.pdf-pages').evaluate(el=>el.scrollTop)>detailTop,'Citations jump to the bibliography');
+  await page.locator('.pdf-pages').evaluate(el=>{el.scrollTop=0;});
+  const external=page.getByRole('link',{name:'https://example.com/',exact:true});
+  assert.equal(await external.getAttribute('target'),'_blank');
+  assert.equal(await external.getAttribute('rel'),'noopener noreferrer');
+  await page.context().route('https://example.com/',route=>route.fulfill({body:'External link destination'}));
+  const popupPromise=page.waitForEvent('popup');await external.click();
+  const popup=await popupPromise;await popup.waitForLoadState();assert.equal(popup.url(),'https://example.com/');await popup.close();
 
   // Select only part of the active source line: its background must not hide the highlight.
   const sourceLine=page.locator('.cm-line').filter({hasText:'Second target paragraph.'});
@@ -306,6 +350,12 @@ try {
   await page.waitForFunction(old=>document.querySelector('.pdf-pages').dataset.url!==old,beforeRefresh.url);
   assert.equal(await page.locator('.pdf-pages').evaluate(el=>el.scrollTop),beforeRefresh.top,'Swap preserves scroll offset');
   assert.equal(await page.locator('.pdf-pending').count(),0);
+  const refreshedURL=await page.locator('.pdf-pages').getAttribute('data-url');
+  await page.getByRole('link',{name:'Go to reference 3',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.pdf-pages').scrollTop>1000);
+  assert.ok(await page.locator('.pdf-pages').evaluate(el=>el.scrollTop)>1000);
+  assert.equal(await page.locator('.pdf-pages').getAttribute('data-url'),refreshedURL);
+
   await page.unroute('**/file?**');
   assert.equal(compileRequests,1);
   await page.reload();
