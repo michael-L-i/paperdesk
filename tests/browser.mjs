@@ -254,6 +254,22 @@ try {
   await page.waitForTimeout(200);
   assert.equal((await positions()).pdf,rightScrolled.pdf);assert.equal((await positions()).page,0);
   assert.equal(await page.evaluate(()=>document.scrollingElement.scrollHeight<=window.innerHeight),true);
+  // Native trackpad pinch zoom pans the whole workspace horizontally from either pane.
+  const cdp=await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setPageScaleFactor',{pageScaleFactor:2});
+  const beforePan=await positions();
+  await page.mouse.move(600,200);await page.mouse.wheel(900,0);
+  await page.waitForFunction(()=>visualViewport.offsetLeft>300);
+  const firstPan=await page.evaluate(()=>visualViewport.offsetLeft);
+  await page.mouse.move(1100,200);await page.mouse.wheel(300,0);
+  await page.waitForFunction(x=>visualViewport.offsetLeft>x,firstPan);
+  assert.deepEqual(await positions(),beforePan,'Horizontal panning leaves both vertical offsets alone');
+  assert.equal(await page.locator('.pdf-pages').evaluate(el=>el.scrollLeft),0,'The PDF does not pan separately');
+  await page.screenshot({path:'/tmp/paperdesk-workspace-pinch.png'});
+  await page.mouse.wheel(-2000,0);
+  await page.waitForFunction(()=>visualViewport.offsetLeft===0);
+  await cdp.send('Emulation.setPageScaleFactor',{pageScaleFactor:1});
+  await cdp.detach();
   await page.getByRole('button',{name:'Expand chat history'}).click();
   const handle=await page.getByRole('separator',{name:'Resize chat history'}).boundingBox();
   await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);await page.mouse.down();await page.mouse.move(handle.x+handle.width/2,handle.y-75,{steps:5});await page.mouse.up();
