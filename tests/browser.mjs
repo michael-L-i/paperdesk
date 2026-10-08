@@ -50,7 +50,11 @@ const pixelBase64='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z
 await fs.writeFile(path.join(root,'board.png'),pixel);
 // Deterministic model fixture; PDF extraction/rendering, API jobs, application, and compilation remain real.
 const fake=path.join(root,'fake-codex.mjs');
-await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconsole.log(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'/bin/zsh -lc "pdftotext -layout exam.pdf -"'}}));\nawait new Promise(r=>setTimeout(r,input.endsWith('Take your time.')?120000:2500));\nconst result={message:'Converted **exam.pdf**: solve $2x+3=11$.',style:'',edits:[{path:'exam_solutions.tex',content:${JSON.stringify(latex)}},{path:'notes/summary.txt',content:'Solve for x.'}]};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
+const matrixReply=String.raw`$$M\begin{bmatrix}
+y_1\\y_2\\y_3\\y_4\end{bmatrix}=\begin{bmatrix}0\\-0.5\\5\\-0.5\end{bmatrix}.$$
+
+Both coordinates start at $0$ and end at $5$.`;
+await fs.writeFile(fake,`#!${process.execPath}\nimport fs from 'node:fs/promises';\nlet input='';for await(const chunk of process.stdin)input+=chunk;\nconsole.log(JSON.stringify({type:'item.started',item:{type:'command_execution',command:'/bin/zsh -lc "pdftotext -layout exam.pdf -"'}}));\nawait new Promise(r=>setTimeout(r,input.endsWith('Take your time.')?120000:2500));\nconst result={message:${JSON.stringify('Converted **exam.pdf**: solve $2x+3=11$.\n\n'+matrixReply)},style:'',edits:[{path:'exam_solutions.tex',content:${JSON.stringify(latex)}},{path:'notes/summary.txt',content:'Solve for x.'}]};\nawait fs.writeFile(${JSON.stringify(path.join(root,'codex-call.json'))},JSON.stringify({args:process.argv.slice(2),prompt:input}));\nawait fs.writeFile(process.argv[process.argv.indexOf('-o')+1],JSON.stringify(result));\n`);
 await fs.chmod(fake,0o755);
 const server=spawn(process.execPath,['server/index.js'],{cwd:app,env:{...process.env,NODE_ENV:'production',PAPERDESK_LIBRARY:path.join(root,'library'),PAPERDESK_DATA_DIR:path.join(root,'.app-data'),PORT:String(port),CODEX_BIN:fake},stdio:'pipe'});
 let browser,page;
@@ -425,7 +429,11 @@ try {
   const reply=page.locator('.message:not(.user) .markdown').filter({hasText:'Converted exam.pdf'});
   await reply.waitFor();
   assert.equal(await reply.locator('strong').textContent(),'exam.pdf','Replies render Markdown');
-  assert.equal(await reply.locator('.katex').count(),1,'Replies render math');
+  assert.equal(await reply.locator('.katex').count(),4,'Replies render inline math and matrices');
+  assert.equal(await reply.locator('.katex-display').count(),1,'Matrix equations use display math');
+  assert.equal(await reply.locator('.katex-error').count(),0,'Matrix delimiters do not produce red parse errors');
+  assert.equal(await reply.locator('math mtable mtr').count(),8,'Both column vectors keep all four rows');
+  await page.screenshot({path:'/tmp/paperdesk-matrix-reply.png'});
   assert.equal(await page.getByRole('button',{name:'Collapse chat history'}).count(),1,'Sending opens the thread');
   const codexCall=JSON.parse(await fs.readFile(path.join(root,'codex-call.json'),'utf8'));
   assert.ok(codexCall.args.includes('workspace-write'),'The agent can only write in its scratch directory');

@@ -12,6 +12,7 @@ import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import './style.css';
 import PdfPreview from './PdfPreview.jsx';
+import { normalizeMathMarkdown } from './mathMarkdown.js';
 const extensions = [StreamLanguage.define(stex), EditorView.lineWrapping];
 const textFile = name => /\.(tex|bib|sty|cls|bst|txt|md)$/i.test(name);
 const imageFile = name => /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
@@ -330,7 +331,7 @@ function Editor({ id, go }) {
         <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
         <div className="thread" ref={thread} style={{height:historyOpen?historyHeight:0}} inert={!historyOpen}><div className="thread-inner">
           {!messages.length&&!aiBusy&&<p className="thread-empty">Ask about anything in this folder, request an edit, or attach a file.</p>}
-          {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{imageFile(f.name)?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}{m.role==='You'?<p>{m.text}</p>:<div className="markdown"><Markdown {...markdown}>{m.text}</Markdown></div>}{m.changed?.length>0&&<div className="message-files" aria-label="Changed files">{m.changed.map(f=><span key={f} className="attachment" title={'Changed '+f}><FileText size={12}/><span>{f}</span></span>)}</div>}</div>)}
+          {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{imageFile(f.name)?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}{m.role==='You'?<p>{m.text}</p>:<div className="markdown"><Markdown {...markdown}>{normalizeMathMarkdown(m.text)}</Markdown></div>}{m.changed?.length>0&&<div className="message-files" aria-label="Changed files">{m.changed.map(f=><span key={f} className="attachment" title={'Changed '+f}><FileText size={12}/><span>{f}</span></span>)}</div>}</div>)}
           {aiBusy&&<div className="thinking" role="status" aria-label="Agent is working"><span className="dots"><i/><i/><i/></span>{activity}</div>}
         </div></div>
         <div className="composer" onClick={e=>{if(e.target===e.currentTarget)composer.current?.focus();}}>
