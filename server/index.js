@@ -8,7 +8,7 @@ import { Workspace, atomicWrite, httpError, template, textFile, withLock } from 
 import { run } from './process.js';
 import { askAI } from './ai.js';
 import { gunzipSync } from 'node:zlib';
-import { parseSourceMap, inverseSearch } from './synctex.js';
+import { parseSourceMap, inverseSearch, refineLine } from './synctex.js';
 import { hash } from './workspace.js';
 import { compileLatex } from './latex.js';
 import { Projects } from './projects.js';
@@ -202,7 +202,10 @@ project.post('/inverse-search', async (req,res) => {
     const match=inverseSearch(map.records,page,x,y);
     if(!match)throw httpError('No source location on this page.',404);
     await workspace.resolve(match.path);
-    return {path:match.path,line:match.line};
+    const { word, before, after } = req.body;
+    if(typeof word!=='string' || !word.trim() || word.length>200)return {path:match.path,line:match.line};
+    const source=(await workspace.read(match.path)).text;
+    return {path:match.path,line:refineLine(map.records,match,source,{word,before:String(before??'').slice(-200),after:String(after??'').slice(0,200)})};
   });
   res.json(result);
 });

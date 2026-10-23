@@ -5,6 +5,22 @@ import { resolveDestination, destinationTop, viewportRectangle } from './pdfLink
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 GlobalWorkerOptions.workerSrc = workerURL;
 
+// The word a double-click selected and the PDF text around it, so the server can find the word
+// in the source when SyncTeX only knows the end of the enclosing macro argument.
+function clickedWord(layer) {
+  const selection = window.getSelection();
+  if (!layer || !selection?.rangeCount || !layer.contains(selection.anchorNode)) return {};
+  const range = selection.getRangeAt(0), walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+  let text = '', start = -1, end = -1;
+  for (let node; (node = walker.nextNode()); text += ' ') {
+    if (node === range.startContainer) start = text.length + range.startOffset;
+    if (node === range.endContainer) end = text.length + range.endOffset;
+    text += node.data;
+  }
+  if (start < 0 || end < start) return {};
+  return { word:text.slice(start, end), before:text.slice(Math.max(0, start-100), start), after:text.slice(end, end+100) };
+}
+
 function PdfPage({ page, width, visible, onReady, onError, onSourceClick, onLinkClick }) {
   const [links, setLinks] = useState([]);
   const canvas = useRef(null), textContainer = useRef(null);
@@ -40,7 +56,7 @@ function PdfPage({ page, width, visible, onReady, onError, onSourceClick, onLink
     if (!onSourceClick || event.target.closest('a')) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     const [x,y] = viewport.convertToPdfPoint((event.clientX-bounds.left)*viewport.width/bounds.width, (event.clientY-bounds.top)*viewport.height/bounds.height);
-    onSourceClick({ page:number, x, y:page.view[3]-y });
+    onSourceClick({ page:number, x, y:page.view[3]-y, ...clickedWord(textContainer.current.querySelector('.pdf-text-layer')) });
   }}>
     <canvas ref={canvas} role="img" aria-label={`PDF page ${number}`}/>
     <div className="pdf-text-host" ref={textContainer}/>
