@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { askAI, describeCommand } from '../server/ai.js';
+import { askAI } from '../server/ai.js';
+import { agents, describeCommand, onPath } from '../server/agents.js';
 test('summarize agent commands as a status line', () => {
   assert.equal(describeCommand(`/bin/zsh -lc "pdftotext -layout '/Users/me/Fall 26:27/EE160A/hw1.pdf' -"`), 'Reading hw1.pdf');
   assert.equal(describeCommand('/bin/zsh -lc "latexmk -pdf main.tex"'), 'Compiling main.tex');
@@ -56,6 +57,41 @@ test('stop a running agent request', async () => {
     assert.ok(Date.now() - started < 10000);
   } finally {
     if (previous === undefined) delete process.env.CODEX_BIN; else process.env.CODEX_BIN = previous;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+test('run Claude Code read-only and take its structured result', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'paperdesk-ai-claude-'));
+  const fake = path.join(dir, 'fake-claude.mjs'), event = value => `console.log(${JSON.stringify(JSON.stringify(value))});`;
+  const use = (name, input) => event({ type: 'assistant', message: { content: [{ type: 'tool_use', name, input }] } });
+  await fs.writeFile(fake, `#!${process.execPath}
+import fs from 'node:fs/promises';
+let input = ''; for await (const chunk of process.stdin) input += chunk;
+await fs.writeFile(${JSON.stringify(path.join(dir, 'call.json'))}, JSON.stringify(process.argv.slice(2)));
+if (input.includes('Sign out')) { ${event({ type: 'result', is_error: true, result: 'Not logged in. Run claude to sign in.' })} process.exit(1); }
+${use('Read', { file_path: '/w/p/notes.txt' })}
+${use('Bash', { command: 'latexmk -pdf main.tex' })}
+${use('StructuredOutput', {})}
+process.stdout.write(${JSON.stringify(JSON.stringify({ type: 'result', is_error: false, structured_output: { message: 'Done.', style: '', edits: [] } }))});
+`);
+  await fs.chmod(fake, 0o755);
+  process.env.CLAUDE_BIN = fake;
+  try {
+    assert.equal(await onPath(agents.claude.bin()), true);
+    assert.equal(await onPath('paperdesk-no-such-command'), false);
+    const activity = [];
+    const result = await askAI({ agent: 'claude', model: 'sonnet', instruction: 'Check it.', mode: 'task', folder: '/w/p', onActivity: a => activity.push(a) });
+    assert.equal(result.message, 'Done.');
+    assert.deepEqual(activity, ['Reading notes.txt', 'Compiling main.tex']);
+    const args = JSON.parse(await fs.readFile(path.join(dir, 'call.json'), 'utf8')), value = flag => args[args.indexOf(flag) + 1];
+    assert.equal(value('--tools'), 'Read,Glob,Grep,Bash', 'No file-editing tools');
+    assert.equal(value('--model'), 'sonnet');
+    assert.deepEqual(JSON.parse(value('--settings')).sandbox, { enabled: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false, filesystem: { denyWrite: ['/w/p'] } });
+    assert.deepEqual(Object.keys(JSON.parse(value('--json-schema')).properties), ['message', 'style', 'edits']);
+    await assert.rejects(askAI({ agent: 'claude', instruction: 'Sign out', mode: 'task' }), /Not logged in/);
+    await assert.rejects(askAI({ agent: 'other', instruction: 'Hi', mode: 'task' }), /No agent is set up/);
+  } finally {
+    delete process.env.CLAUDE_BIN;
     await fs.rm(dir, { recursive: true, force: true });
   }
 });

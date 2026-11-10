@@ -1,4 +1,4 @@
-// Optional live check: uses your Codex account. Run with npm run test:ai.
+// Optional live check with your own account: npm run test:ai (Codex) or npm run test:ai -- claude.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +12,7 @@ try {
   for (const ext of ['tex','aux','log']) await fs.unlink(path.join(temp,'exam.'+ext));
   // Nothing is attached: the agent has to find and read the PDF in the folder itself.
   const activity = [];
-  const result = await askAI({instruction:'Convert the exam in this folder to editable LaTeX with blank solution space.',mode:'task',folder:temp,files:['- exam.pdf (12 KB)'],onActivity:a=>activity.push(a)});
+  const result = await askAI({agent:process.argv[2]||'codex',instruction:'Convert the exam in this folder to editable LaTeX with blank solution space.',mode:'task',folder:temp,files:['- exam.pdf (12 KB)'],onActivity:a=>activity.push(a)});
   assert.ok(activity.some(a=>a.includes('exam.pdf')), `The agent read exam.pdf: ${activity}`);
   const [edit] = result.edits;
   assert.ok(result.edits.length === 1 && edit.path.endsWith('.tex') && edit.path !== 'exam.tex', 'Must create one new document and preserve the original exam.pdf');
