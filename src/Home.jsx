@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { FolderOpen, X, Plus, Trash2 } from 'lucide-react';
+import { FolderOpen, X, Plus, Trash2, Settings as Gear } from 'lucide-react';
 import { api } from './api.js';
+import Settings from './Settings.jsx';
 const since=new Intl.RelativeTimeFormat(undefined,{numeric:'auto'});
 function ago(date) {
   const seconds=(new Date(date)-Date.now())/1000;
@@ -11,10 +12,15 @@ function ago(date) {
 // Recent projects first, like Overleaf's dashboard.
 export default function Home({ go }) {
   const [projects,setProjects]=useState(null), [query,setQuery]=useState(''), [error,setError]=useState('');
-  const [menu,setMenu]=useState(false), [naming,setNaming]=useState(false), [name,setName]=useState('');
+  const [menu,setMenu]=useState(false), [naming,setNaming]=useState(false), [name,setName]=useState(''), [settings,setSettings]=useState(false);
   const fail=e=>setError(e.message);
   const load=()=>api('/projects').then(setProjects,fail);
   useEffect(()=>{document.title='Paperdesk';load();},[]);
+  // On the first visit, show what is missing before it gets in the way.
+  useEffect(()=>{
+    if(localStorage.getItem('paperdesk:setup'))return;
+    api('/settings').then(s=>{localStorage.setItem('paperdesk:setup','seen');if(s.tools.some(t=>!t.ok)||!s.agent)setSettings(true);},()=>{});
+  },[]);
   async function openFolder() {
     setMenu(false);setError('');
     try{const picked=await api('/choose-directory',{});if(!picked.cancelled)go('/p/'+(await api('/projects',{path:picked.path})).id);}catch(e){fail(e);}
@@ -36,6 +42,7 @@ export default function Home({ go }) {
     <header>
       <img src="/favicon.svg" alt="" width={18} height={18}/><strong className="brand">Paperdesk</strong>
       <div className="spacer"/>
+      <button aria-label="Settings" title="Settings" onClick={()=>setSettings(true)}><Gear size={15}/></button>
       <div className="menu-wrap"><button className="primary" onClick={()=>setMenu(!menu)}><Plus size={14}/>New project</button>{menu&&<div className="menu">
         <button onClick={()=>{setMenu(false);setName('');setNaming(true);}}>Blank project</button>
         <button onClick={openFolder}>Open folder…</button>
@@ -57,6 +64,7 @@ export default function Home({ go }) {
         </tr>)}</tbody>
       </table>:<p className="muted projects-empty">{projects.length?'No matching projects.':'No projects yet. Create one, or open a folder you already have.'}</p>)}
     </div></main>
+    {settings&&<Settings onClose={()=>setSettings(false)}/>}
     {naming&&<div className="backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label="New project"><div className="dialog-title"><strong>New project</strong><button aria-label="Close dialog" onClick={()=>setNaming(false)}><X size={16}/></button></div>
       <form onSubmit={create}><input autoFocus aria-label="Project name" placeholder="Project name" value={name} onChange={e=>setName(e.target.value)}/><div className="dialog-bottom"><span className="muted">Saved in your Paperdesk library</span><button className="primary" type="submit" disabled={!name.trim()}>Create</button></div></form>
     </section></div>}

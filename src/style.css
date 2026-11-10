@@ -167,3 +167,19 @@ span.log-location{text-decoration:none;color:#999}
 .tree-more{justify-content:flex-start;flex-shrink:0;padding:7px 10px;border-top:1px solid #e8e8e8;border-radius:0;color:#888;font-size:11px}
 .tree .tree-more:hover{background:#efefef}
 .projects .locate{margin:-4px -7px;padding:4px 7px;color:#944a3e;font-size:12px}
+
+/* Settings: setup checklist, agent choice, and library folder. */
+.settings h3{margin:18px 0 6px;font-size:11px;font-weight:500;color:#999}
+.settings h3:first-child{margin-top:0}
+.settings .check{display:flex;align-items:baseline;gap:8px;padding:5px 0;font-size:13px}
+.settings .check>span:first-of-type{min-width:82px}
+.settings .check>:is(svg,input){flex-shrink:0;align-self:flex-start;margin:3px 0 0}
+.settings .check .muted{flex:1;line-height:1.5}
+.settings .ok{color:#3a8a4f}.settings .missing{color:#b0503f}
+.settings code{white-space:nowrap;padding:1px 4px;border-radius:4px;background:#f1f1f1;font-family:'SFMono-Regular',Consolas,monospace;user-select:all}
+.settings .field{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px}
+.settings .field input{flex:1;min-width:0}
+.settings .field button{border-color:#ddd}
+.settings p{margin:6px 0 0;line-height:1.5}
+.settings-error{margin:0 0 12px;color:#944a3e}
+.composer .connect{border-color:#ddd;font-size:12px}

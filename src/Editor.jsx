@@ -9,6 +9,7 @@ import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import PdfPreview from './PdfPreview.jsx';
 import FileTree from './FileTree.jsx';
+import Settings from './Settings.jsx';
 import { LogsButton, Logs } from './Logs.jsx';
 import { api, request, textFile, imageFile } from './api.js';
 import { normalizeMathMarkdown } from './mathMarkdown.js';
@@ -47,7 +48,9 @@ export default function Editor({ id, go }) {
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
   const editorView=useRef(null), primaryFile=useRef(null), fileInput=useRef(null), uploadInput=useRef(null);
   const state=useRef({doc:null,text:'',files:[]}), saves=useRef(Promise.resolve()), building=useRef(false), attemptedBuild=useRef(''), sourceFingerprint=useRef(null);
-  const [syncVersion,setSyncVersion]=useState(0), [offline,setOffline]=useState(false), [notice,setNotice]=useState('');
+  const [syncVersion,setSyncVersion]=useState(0), [offline,setOffline]=useState(false), [notice,setNotice]=useState(''), [settings,setSettings]=useState(false), [agentReady,setAgentReady]=useState(true);
+  const checkAgent=()=>api('/settings').then(s=>setAgentReady(!!s.agent),()=>{});
+  useEffect(()=>{checkAgent();},[]);
   state.current={doc,text,files:files||[]};
   const aiBusy=!!job || starting;
   const syncState=useRef({});syncState.current={pdf,status,aiBusy};
@@ -341,7 +344,7 @@ export default function Editor({ id, go }) {
       <div className="spacer"/>
       
       <button disabled={!doc||compiling||aiBusy} onClick={()=>{setError('');compile();}}><RefreshCw size={14}/>Compile</button>
-      <div className="menu-wrap"><button aria-label="More" onClick={()=>setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu&&<div className="menu"><button role="menuitemcheckbox" aria-checked={autoCompile} onClick={()=>{const next=!autoCompile;setAutoCompile(next);localStorage.setItem('paperdesk:autoCompile',String(next));setMenu(false);}}>Auto-compile: {autoCompile?'on':'off'}</button><button disabled={!doc||aiBusy} onClick={loadHistory}>History</button><button onClick={loadStyle}>Writing style</button><button disabled={!files||aiBusy} onClick={()=>{refreshFiles().catch(fail);setMenu(false);}}>Refresh files</button><button disabled={!files||aiBusy} onClick={cleanUp}>Clean up build files</button></div>}</div>
+      <div className="menu-wrap"><button aria-label="More" onClick={()=>setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu&&<div className="menu"><button role="menuitemcheckbox" aria-checked={autoCompile} onClick={()=>{const next=!autoCompile;setAutoCompile(next);localStorage.setItem('paperdesk:autoCompile',String(next));setMenu(false);}}>Auto-compile: {autoCompile?'on':'off'}</button><button disabled={!doc||aiBusy} onClick={loadHistory}>History</button><button onClick={loadStyle}>Writing style</button><button onClick={()=>{setMenu(false);setSettings(true);}}>Settings</button><button disabled={!files||aiBusy} onClick={()=>{refreshFiles().catch(fail);setMenu(false);}}>Refresh files</button><button disabled={!files||aiBusy} onClick={cleanUp}>Clean up build files</button></div>}</div>
     </header>
     {error&&<div className="error" role="alert"><details><summary>{error.split('\n')[0].slice(0,180)}</summary><pre>{error}</pre></details>{status==='Save failed'&&<><button onClick={downloadDraft}>Download draft</button><button onClick={reloadDisk}>Use disk version</button></>}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
     <main className={treeOpen?'with-tree':''}>
@@ -362,13 +365,14 @@ export default function Editor({ id, go }) {
         </div></div>
         <div className="composer" onClick={e=>{if(e.target===e.currentTarget)composer.current?.focus();}}>
           {attachments.length>0&&<div className="attachments">{attachments.map(a=><span key={a.key} className={'attachment'+(a.path?'':' uploading')} title={a.path?'Saved in the project as '+a.path:'Adding '+a.name}>{imageFile(a.name)?<Image size={12}/>:<FileText size={12}/>}<span>{a.name}</span><button aria-label={'Remove '+a.name} onClick={()=>detach(a)}><X size={12}/></button></span>)}</div>}
-          <textarea ref={composer} rows={1} aria-label="Agent request" placeholder="Ask anything or request an edit…" disabled={!files} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={composerKey} onPaste={e=>{if(e.clipboardData.files.length&&!e.clipboardData.getData('text/plain')){e.preventDefault();attach([...e.clipboardData.files]);}}}/>
-          <div className="composer-actions"><button className="attach" aria-label="Attach files" title="Attach files" disabled={!files} onClick={()=>fileInput.current.click()}><Paperclip size={16}/></button><input ref={fileInput} type="file" multiple hidden onChange={e=>{attach([...e.target.files]);e.target.value='';}}/><div className="spacer"/>{job?<button className="send" aria-label="Stop agent" title="Stop" onClick={()=>{setActivity('Stopping…');api('/jobs/'+job.id+'/stop',{}).catch(fail);}}><Square size={11} fill="currentColor"/></button>:<button className="send" aria-label="Send to Agent" title="Send (Enter)" disabled={!prompt.trim()||!files||aiBusy||uploading} onClick={send}><ArrowUp size={16}/></button>}</div>
+          <textarea ref={composer} rows={1} aria-label="Agent request" placeholder={agentReady?'Ask anything or request an edit…':'Connect Codex or Claude Code to ask questions and request edits'} disabled={!files||!agentReady} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={composerKey} onPaste={e=>{if(e.clipboardData.files.length&&!e.clipboardData.getData('text/plain')){e.preventDefault();attach([...e.clipboardData.files]);}}}/>
+          <div className="composer-actions"><button className="attach" aria-label="Attach files" title="Attach files" disabled={!files} onClick={()=>fileInput.current.click()}><Paperclip size={16}/></button><input ref={fileInput} type="file" multiple hidden onChange={e=>{attach([...e.target.files]);e.target.value='';}}/><div className="spacer"/>{!agentReady?<button className="connect" onClick={()=>setSettings(true)}>Connect an agent</button>:job?<button className="send" aria-label="Stop agent" title="Stop" onClick={()=>{setActivity('Stopping…');api('/jobs/'+job.id+'/stop',{}).catch(fail);}}><Square size={11} fill="currentColor"/></button>:<button className="send" aria-label="Send to Agent" title="Send (Enter)" disabled={!prompt.trim()||!files||aiBusy||uploading} onClick={send}><ArrowUp size={16}/></button>}</div>
         </div>
       </section>
       </section>
       <section className="right"><div className="panel-title"><span>PDF{pdf?.engine&&' · '+pdf.engine}</span><div className="spacer"/><span className={'status'+(shownLogs?.failed&&!compiling?' failed':'')}>{compiling?'Compiling…':shownLogs?.failed?'Compile failed':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{shownLogs&&<LogsButton entries={shownLogs.entries} open={logsOpen} onClick={()=>setLogsOpen(!logsOpen)}/>}{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{logsOpen&&<Logs logs={shownLogs} hasPdf={!!pdf} onReveal={revealLog} onClose={()=>setLogsOpen(false)}/>}<div className="preview-pdf" hidden={logsOpen}>{pdf?<PdfPreview key={pdf.path} url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></div></section>
     </main>
+    {settings&&<Settings onClose={saved=>{setSettings(false);if(saved)checkAgent();}}/>}
     {dialog&&<div className="backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label={dialogTitles[dialog]}><div className="dialog-title"><strong>{dialogTitles[dialog]}</strong><button aria-label="Close dialog" onClick={()=>setDialog(null)}><X size={16}/></button></div>
     {dialog==='new'&&<form onSubmit={e=>{e.preventDefault();createFile();}}><input autoFocus aria-label="Filename" placeholder="chapters/intro.tex or refs.bib" value={newName} onChange={e=>setNewName(e.target.value)}/><div className="dialog-bottom"><div className="spacer"/><button className="primary" type="submit" disabled={!newName.trim()}>Create</button></div></form>}
     {dialog==='rename'&&<form onSubmit={e=>{e.preventDefault();renameFile();}}><input autoFocus aria-label="New name" value={newName} onChange={e=>setNewName(e.target.value)}/><div className="dialog-bottom"><div className="spacer"/><button className="primary" type="submit" disabled={!newName.trim()||newName.trim()===viewing}>Rename</button></div></form>}

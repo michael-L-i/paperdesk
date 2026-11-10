@@ -12,9 +12,18 @@ import { compileLatex, parseLog } from './latex.js';
 import { Projects } from './projects.js';
 import { sourceState, projectState } from './project-state.js';
 import { appDir, dataDir, port, prepareDataDir } from './config.js';
+import { agents } from './agents.js';
+import { checkSetup } from './setup.js';
 await prepareDataDir();
-const library = path.resolve(process.env.PAPERDESK_LIBRARY || path.join(os.homedir(), 'Documents', 'Paperdesk'));
-const projects = new Projects(path.join(dataDir, 'projects.json'), library);
+const readJSON = async (name, fallback) => { try { return JSON.parse(await fs.readFile(path.join(dataDir, name), 'utf8')); } catch (e) { if (e.code === 'ENOENT') return fallback; throw e; } };
+const writeJSON = (name, value) => atomicWrite(path.join(dataDir, name), JSON.stringify(value, null, 2));
+const saved = await readJSON('settings.json', {});
+const projects = new Projects(path.join(dataDir, 'projects.json'), process.env.PAPERDESK_LIBRARY || saved.library || path.join(os.homedir(), 'Documents', 'Paperdesk'));
+// Settings chosen in the app; environment variables win. Without a choice, the first installed agent is used.
+async function settings() {
+  const { agent, model = '' } = await readJSON('settings.json', {}), setup = await checkSetup();
+  return { ...setup, agent: process.env.PAPERDESK_AGENT || agent || setup.agents.find(a => a.ok)?.id || '', model, library: projects.library };
+}
 const app = express();
 const jobs = new Map();
 let aiBusy = false;
@@ -25,8 +34,6 @@ app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store'); next();
 });
 app.use(express.json({ limit: '2mb' }));
-const readJSON = async (name, fallback) => { try { return JSON.parse(await fs.readFile(path.join(dataDir, name), 'utf8')); } catch (e) { if (e.code === 'ENOENT') return fallback; throw e; } };
-const writeJSON = (name, value) => atomicWrite(path.join(dataDir, name), JSON.stringify(value, null, 2));
 const stylePath = path.join(dataDir, 'writing-style.md');
 const readStyle = async () => { try { return await fs.readFile(stylePath, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; } };
 async function captureEdit(before, after, file) {
@@ -41,6 +48,14 @@ async function captureEdit(before, after, file) {
     await writeJSON('examples.json', examples.slice(-40));
   });
 }
+app.get('/api/settings', async (req, res) => res.json(await settings()));
+app.put('/api/settings', async (req, res) => {
+  const { agent, model, library } = req.body;
+  if ((agent !== '' && !Object.hasOwn(agents, agent)) || typeof model !== 'string' || model.length > 100 || typeof library !== 'string' || !path.isAbsolute(library)) throw httpError('Invalid settings.');
+  await writeJSON('settings.json', { agent, model: model.trim(), library: path.resolve(library) });
+  if (!process.env.PAPERDESK_LIBRARY) projects.library = path.resolve(library);
+  res.json(await settings());
+});
 app.get('/api/projects', async (req, res) => res.json(await projects.list()));
 // Links an existing folder ({ path }) or creates a library project ({ name }).
 app.post('/api/projects', async (req, res) => res.json(req.body.path ? await projects.link(req.body.path) : await projects.create(req.body.name)));
@@ -91,12 +106,14 @@ project.post('/upload', express.raw({ type: () => true, limit: '50mb' }), async 
   res.json({ path: await req.ws.add(req.query.path, req.body, req.query.unique === '1') });
 });
 // One agent request at a time; the client polls /api/jobs/:id for the result and can stop it.
-function startJob(fields, ask) {
+async function startJob(fields, ask) {
   if (aiBusy) throw httpError('The agent is already working.', 409);
+  const { agent, model } = await settings();
+  if (!agent) throw httpError('Connect an agent first: open Settings and choose Codex or Claude Code.', 409);
   for (const [key, old] of jobs) if (old.status !== 'running' && Date.now() - old.started > 3600000) jobs.delete(key);
   const job = { id: crypto.randomUUID(), status: 'running', started: Date.now(), controller: new AbortController(), ...fields };
   jobs.set(job.id, job); aiBusy = true;
-  ask(job).then(result => Object.assign(job, { status: 'done', result }), e => Object.assign(job, job.controller.signal.aborted ? { status: 'stopped' } : { status: 'error', error: e.message })).finally(() => { aiBusy = false; });
+  ask({ agent, model, onActivity: activity => { job.activity = activity; }, signal: job.controller.signal }).then(result => Object.assign(job, { status: 'done', result }), e => Object.assign(job, job.controller.signal.aborted ? { status: 'stopped' } : { status: 'error', error: e.message })).finally(() => { aiBusy = false; });
   return job.id;
 }
 const size = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
@@ -122,9 +139,9 @@ project.post('/task', async (req,res) => {
   if (files.length > 500) files.splice(500, Infinity, `- … and ${files.length - 500} more`);
   if (open && (!doc || doc.revision !== revision)) throw httpError('The open file changed. Reload it before asking the agent.',409);
   const style = await readStyle(), examples = await readJSON('examples.json', []);
-  res.json({ id: startJob({ root: req.ws.root, revisions }, job => askAI({
-    instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), folder: req.ws.root, files, open: doc?.path, main: typeof main === 'string' ? main : '', attachments,
-    history: history.slice(-12).map(m => ({ role: m.role, text: m.text.slice(0, 4000) })), onActivity: activity => { job.activity = activity; }, signal: job.controller.signal,
+  res.json({ id: await startJob({ root: req.ws.root, revisions }, run => askAI({
+    ...run, instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), folder: req.ws.root, files, open: doc?.path, main: typeof main === 'string' ? main : '', attachments,
+    history: history.slice(-12).map(m => ({ role: m.role, text: m.text.slice(0, 4000) })),
   })) });
 });
 app.post('/api/tasks/:id/apply', async (req,res) => {
@@ -242,7 +259,7 @@ project.post('/style/suggest', async (req, res) => {
   if (doc.revision !== revision) throw httpError('Save before asking the agent.', 409);
   const style = await readStyle(), examples = await readJSON('examples.json', []);
   if (!examples.length) throw httpError('Write or revise some answers first. Human edits become examples after saving.');
-  res.json({ id: startJob({ file, revision }, job => askAI({ instruction, mode: 'style', text: doc.text, style, examples, signal: job.controller.signal })) });
+  res.json({ id: await startJob({ file, revision }, run => askAI({ ...run, instruction, mode: 'style', text: doc.text, style, examples })) });
 });
 app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {revisions,applied,controller,...visible}=job; res.json(visible); });
 app.post('/api/jobs/:id/stop', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists.', 404); job.controller.abort(); res.json({ ok: true }); });
@@ -257,4 +274,4 @@ if (process.env.NODE_ENV === 'production') {
   app.use(vite.middlewares);
 }
 app.use((e, req, res, next) => { console.error(e.message); res.status(e.status || (e.code === 'ENOENT' ? 404 : 500)).json({ error: e.message, diagnostics: e.diagnostics }); });
-app.listen(port, '127.0.0.1', () => console.log(`Paperdesk: http://localhost:${port}\nLibrary: ${library}`));
+app.listen(port, '127.0.0.1', () => console.log(`Paperdesk: http://localhost:${port}\nData: ${dataDir}`));
