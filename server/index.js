@@ -147,6 +147,7 @@ project.get('/file', async (req, res) => {
 });
 project.post('/rename', async (req, res) => res.json({ path: await req.ws.rename(req.body.from, req.body.to) }));
 project.delete('/file', async (req, res) => { await req.ws.trash(req.query.path); res.json({ ok: true }); });
+project.post('/clean', async (req, res) => res.json({ removed: await req.ws.clean() }));
 project.post('/compile', async (req, res) => {
   const workspace = req.ws, { root } = workspace, relative = req.body.path;
   if (!String(relative).endsWith('.tex')) throw httpError('Choose a .tex file.');

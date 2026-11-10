@@ -1,8 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { atomicWrite, httpError, template, withLock } from './workspace.js';
-import { run } from './process.js';
+import { atomicWrite, httpError, template, trash, withLock } from './workspace.js';
 
 const isDirectory = dir => fs.stat(dir).then(s => s.isDirectory(), () => false);
 // A project is a folder: a linked one the user picked, or a library one Paperdesk created.
@@ -82,7 +81,7 @@ export class Projects {
   // Linked folders are only forgotten; library folders go to the Trash.
   async remove(id) {
     const project = await this.get(id);
-    if (project.kind === 'library' && project.path.startsWith(this.library + path.sep) && await isDirectory(project.path)) await run('/usr/bin/trash', [project.path]);
+    if (project.kind === 'library' && project.path.startsWith(this.library + path.sep) && await isDirectory(project.path)) await trash(project.path);
     await this.update(list => { const i = list.findIndex(p => p.id === id); if (i >= 0) list.splice(i, 1); });
   }
 }

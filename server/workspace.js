@@ -15,11 +15,21 @@ export const template = String.raw`\documentclass[11pt]{article}
 `;
 // Files the editor can open; everything else in a project is listed but read-only.
 export const textFile = name => /\.(tex|bib|sty|cls|bst|txt|md)$/i.test(name);
-// latexmk builds in a temp folder, but linked folders may hold other tools' output.
-const buildOutput = /\.(aux|log|fls|fdb_latexmk|synctex\.gz|out|toc|bbl|blg|bcf|run\.xml)$/i;
+// Paperdesk builds in a temp folder, but linked folders may hold other tools' output.
+const latexOutput = /\.(aux|log|fls|fdb_latexmk|synctex\.gz|out|toc|lof|lot|blg|bcf|run\.xml|nav|snm|vrb)$/i;
+const hidden = name => latexOutput.test(name) || /\.(bbl|o|pyc)$/i.test(name);
+const ignoredFolders = ['node_modules', 'dist', '__pycache__'];
 const visible = relative => typeof relative === 'string' && !relative.split('/').some(part => !part || part.startsWith('.'));
 const exists = file => fs.stat(file).then(() => true, () => false);
 export function httpError(message, status = 400) { return Object.assign(new Error(message), { status }); }
+// Deleted files go to the Trash, so a mistake can be undone. macOS 15 ships /usr/bin/trash; older versions ask Finder.
+export async function trash(...files) {
+  try { await run('/usr/bin/trash', files); }
+  catch (e) {
+    if (!e.message.includes('is not installed')) throw e;
+    for (const file of files) await run('/usr/bin/osascript', ['-e', 'on run argv', '-e', 'tell application "Finder" to delete (POSIX file (item 1 of argv) as alias)', '-e', 'end run', file]);
+  }
+}
 export async function atomicWrite(file, content) {
   const tmp = `${file}.${crypto.randomUUID()}.tmp`;
   try { await fs.writeFile(tmp, content); await fs.rename(tmp, file); }
@@ -53,20 +63,34 @@ export class Workspace {
     }
     return target;
   }
+  // Every folder Paperdesk looks in, with its files: not hidden, not dependencies, not the app itself.
+  async *folders(dir = this.root, depth = 0) {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    yield [dir, entries.filter(e => e.isFile() && !e.name.startsWith('.')).map(e => e.name)];
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory() && depth < 10 && !e.name.startsWith('.') && !ignoredFolders.includes(e.name) && full !== this.appDir) yield* this.folders(full, depth + 1);
+    }
+  }
   async list() {
     const files = [];
-    const visit = async (dir, depth = 0) => {
-      if (depth > 10 || files.length > 3000) return;
-      for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-        if (entry.name.startsWith('.') || ['node_modules', 'dist'].includes(entry.name)) continue;
-        const full = path.join(dir, entry.name);
-        if (full === this.appDir || entry.isSymbolicLink()) continue;
-        if (entry.isDirectory()) await visit(full, depth + 1);
-        else if (!buildOutput.test(entry.name)) files.push(path.relative(this.root, full));
-      }
-    };
-    await visit(this.root);
+    for await (const [dir, names] of this.folders()) {
+      for (const name of names) if (!hidden(name)) files.push(path.relative(this.root, path.join(dir, name)));
+      if (files.length > 3000) break;
+    }
     return files.sort();
+  }
+  // Moves LaTeX build files left beside their source, such as hw.aux next to hw.tex, to the Trash.
+  async clean(remove = trash) {
+    const found = [];
+    for await (const [dir, names] of this.folders()) {
+      for (const name of names) {
+        const match = name.match(latexOutput);
+        if (match && names.includes(name.slice(0, match.index) + '.tex')) found.push(path.join(dir, name));
+      }
+    }
+    if (found.length) await remove(...found);
+    return found.map(file => path.relative(this.root, file));
   }
   exclusive(key, fn) { return withLock(path.join(this.root, key), fn); }
   // A path for a new file: visible, inside the project, with its folders created.
@@ -92,11 +116,10 @@ export class Workspace {
     await fs.rename(source, await this.prepare(to));
     return to;
   }
-  // Deleted files go to the macOS Trash, so a mistake can be undone.
   async trash(relative) {
     const file = await this.resolve(relative);
     if (file === this.root) throw httpError('Choose a file.');
-    await run('/usr/bin/trash', [file]);
+    await trash(file);
   }
   async read(relative) {
     if (!textFile(relative)) throw httpError('Choose a text file.');

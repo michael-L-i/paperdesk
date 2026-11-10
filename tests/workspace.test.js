@@ -36,9 +36,18 @@ test('import keeps original bytes and rolls back when destination conflicts', as
   assert.equal(await fs.readFile(path.join(root, 'Conflict/source.pdf'), 'utf8'), 'keep');
   await assert.rejects(fs.stat(path.join(root, 'Conflict/main.tex')), { code: 'ENOENT' });
 });
+test('clean up only the build files beside a LaTeX source', async () => {
+  await fs.mkdir(path.join(root, 'notes'));
+  for (const name of ['hw.tex', 'hw.aux', 'hw.synctex.gz', 'hw.pdf', 'hw.bbl', 'server.log', 'notes/a.tex', 'notes/a.fls']) await fs.writeFile(path.join(root, name), 'x');
+  const trashed = [];
+  assert.deepEqual((await ws.clean((...files) => trashed.push(...files))).sort(), ['hw.aux', 'hw.synctex.gz', 'notes/a.fls']);
+  assert.deepEqual(trashed.map(f => path.relative(root, f)).sort(), ['hw.aux', 'hw.synctex.gz', 'notes/a.fls']);
+});
 test('list every project file except build output, and open only text files', async () => {
   await fs.mkdir(path.join(root, 'chapters'));
   for (const name of ['main.tex', 'main.aux', 'main.pdf', 'refs.bib', 'chapters/intro.tex', 'figure.png', '.hidden.tex']) await fs.writeFile(path.join(root, name), 'x');
+  await fs.mkdir(path.join(root, '__pycache__'));
+  for (const name of ['main.o', 'run.pyc', '__pycache__/run.txt']) await fs.writeFile(path.join(root, name), 'x');
   assert.deepEqual(await ws.list(), ['chapters/intro.tex', 'figure.png', 'main.pdf', 'main.tex', 'refs.bib']);
   assert.equal((await ws.read('refs.bib')).text, 'x');
   await assert.rejects(ws.read('figure.png'), { status: 400 });

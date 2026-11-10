@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, FilePlus, FileText, Image, File, Star, Upload } from 'lucide-react';
-import { textFile, imageFile } from './api.js';
+import { textFile, imageFile, documentFile } from './api.js';
 // Folders start collapsed, except those leading to the open file. Dropped files upload into the folder under them.
 export default function FileTree({ files, open, main, disabled, onOpen, onMain, onNew, onUpload, uploadInput }) {
-  const [expanded,setExpanded]=useState(()=>new Set());
+  const [expanded,setExpanded]=useState(()=>new Set()), [all,setAll]=useState(()=>localStorage.getItem('paperdesk:allFiles')==='true');
+  const shown=all?files:files.filter(f=>documentFile(f)||f===open||f===main), others=files.length-shown.length;
   useEffect(()=>{
     const parts=open?.split('/').slice(0,-1)||[];
     if(parts.length) setExpanded(set=>new Set([...set,...parts.map((_,i)=>parts.slice(0,i+1).join('/')+'/')]));
   },[open]);
   const tree={};
-  for(const file of files){
+  for(const file of shown){
     let node=tree;const parts=file.split('/');
     for(const part of parts.slice(0,-1)) node=node[part+'/']??={};
     node[parts.at(-1)]=file;
@@ -37,5 +38,6 @@ export default function FileTree({ files, open, main, disabled, onOpen, onMain, 
       <input ref={uploadInput} type="file" multiple hidden onChange={e=>{onUpload([...e.target.files]);e.target.value='';}}/>
     </div>
     <div className="tree-rows">{rows(tree,'',0)}</div>
+    {(all||others>0)&&<button className="tree-more" onClick={()=>{setAll(!all);localStorage.setItem('paperdesk:allFiles',String(!all));}}>{all?'Show documents only':`Show ${others} other ${others===1?'file':'files'}`}</button>}
   </nav>;
 }

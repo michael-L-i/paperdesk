@@ -47,7 +47,7 @@ export default function Editor({ id, go }) {
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
   const editorView=useRef(null), primaryFile=useRef(null), fileInput=useRef(null), uploadInput=useRef(null);
   const state=useRef({doc:null,text:'',files:[]}), saves=useRef(Promise.resolve()), building=useRef(false), attemptedBuild=useRef(''), sourceFingerprint=useRef(null);
-  const [syncVersion,setSyncVersion]=useState(0), [offline,setOffline]=useState(false);
+  const [syncVersion,setSyncVersion]=useState(0), [offline,setOffline]=useState(false), [notice,setNotice]=useState('');
   state.current={doc,text,files:files||[]};
   const aiBusy=!!job || starting;
   const syncState=useRef({});syncState.current={pdf,status,aiBusy};
@@ -319,6 +319,11 @@ export default function Editor({ id, go }) {
     }catch(e){fail(e);}
     await refreshFiles().catch(fail);
   }
+  // Build files left by other tools, such as hw.aux beside hw.tex, go to the Trash.
+  async function cleanUp(){
+    setMenu(false);
+    try{const {removed}=await call('/clean',{});setNotice(removed.length?`Moved ${removed.length} build ${removed.length===1?'file':'files'} to the Trash`:'No build files to clean up');setTimeout(()=>setNotice(''),4000);}catch(e){fail(e);}
+  }
   async function suggestStyle(){
     try{const saved=await save();const request=await call('/style/suggest',{path:saved.path,revision:saved.revision,instruction:'Suggest an updated writing profile from my edits.'});const pending={id:request.id,project:id};setJob(pending);sessionStorage.setItem('paperdesk:task',JSON.stringify(pending));setDialog(null);setHistoryOpen(true);}catch(e){fail(e);}
   }
@@ -332,11 +337,11 @@ export default function Editor({ id, go }) {
       <span className="project-name" title={project?.path}>{project?.name}</span>
       <span className="separator"/>
       <button aria-label={treeOpen?'Hide files':'Show files'} title={treeOpen?'Hide files':'Show files'} aria-pressed={treeOpen} onClick={()=>{setTreeOpen(!treeOpen);localStorage.setItem('paperdesk:tree',String(!treeOpen));}}><PanelLeft size={15}/></button>
-      <span className="status">{offline?'Reconnecting…':status}</span>
+      <span className="status">{notice||(offline?'Reconnecting…':status)}</span>
       <div className="spacer"/>
       
       <button disabled={!doc||compiling||aiBusy} onClick={()=>{setError('');compile();}}><RefreshCw size={14}/>Compile</button>
-      <div className="menu-wrap"><button aria-label="More" onClick={()=>setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu&&<div className="menu"><button role="menuitemcheckbox" aria-checked={autoCompile} onClick={()=>{const next=!autoCompile;setAutoCompile(next);localStorage.setItem('paperdesk:autoCompile',String(next));setMenu(false);}}>Auto-compile: {autoCompile?'on':'off'}</button><button disabled={!doc||aiBusy} onClick={loadHistory}>History</button><button onClick={loadStyle}>Writing style</button><button disabled={!files||aiBusy} onClick={()=>{refreshFiles().catch(fail);setMenu(false);}}>Refresh files</button></div>}</div>
+      <div className="menu-wrap"><button aria-label="More" onClick={()=>setMenu(!menu)}><MoreHorizontal size={18}/></button>{menu&&<div className="menu"><button role="menuitemcheckbox" aria-checked={autoCompile} onClick={()=>{const next=!autoCompile;setAutoCompile(next);localStorage.setItem('paperdesk:autoCompile',String(next));setMenu(false);}}>Auto-compile: {autoCompile?'on':'off'}</button><button disabled={!doc||aiBusy} onClick={loadHistory}>History</button><button onClick={loadStyle}>Writing style</button><button disabled={!files||aiBusy} onClick={()=>{refreshFiles().catch(fail);setMenu(false);}}>Refresh files</button><button disabled={!files||aiBusy} onClick={cleanUp}>Clean up build files</button></div>}</div>
     </header>
     {error&&<div className="error" role="alert"><details><summary>{error.split('\n')[0].slice(0,180)}</summary><pre>{error}</pre></details>{status==='Save failed'&&<><button onClick={downloadDraft}>Download draft</button><button onClick={reloadDisk}>Use disk version</button></>}<button aria-label="Dismiss error" onClick={()=>setError('')}><X size={14}/></button></div>}
     <main className={treeOpen?'with-tree':''}>
