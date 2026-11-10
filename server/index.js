@@ -3,14 +3,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { Workspace, atomicWrite, hash, httpError, template, textFile, withLock } from './workspace.js';
+import { Workspace, atomicWrite, httpError, template, textFile, withLock } from './workspace.js';
 import { run } from './process.js';
 import { askAI } from './ai.js';
-import { gunzipSync } from 'node:zlib';
-import { parseSourceMap, inverseSearch, refineLine } from './synctex.js';
-import { compileLatex, parseLog } from './latex.js';
 import { Projects } from './projects.js';
-import { sourceState, projectState } from './project-state.js';
+import { projectState } from './project-state.js';
+import { buildPdf, locateSource } from './build.js';
 import { appDir, dataDir, port, prepareDataDir } from './config.js';
 import { agents } from './agents.js';
 import { checkSetup } from './setup.js';
@@ -74,17 +72,18 @@ const project = express.Router({ mergeParams: true });
 app.use('/api/projects/:project', project);
 project.use(async (req, res, next) => {
   req.project = await projects.get(req.params.project);
-  req.ws = new Workspace(req.project.path, appDir);
+  req.ws = new Workspace(req.project.path, appDir, path.join(dataDir, 'projects', req.project.id));
   next();
 });
 project.patch('/', async (req, res) => {
   const { mainFile } = req.body;
   if (mainFile !== undefined && (typeof mainFile !== 'string' || !mainFile.endsWith('.tex'))) throw httpError('Choose a .tex file.');
   if (mainFile) await req.ws.resolve(mainFile);
+  await req.ws.adoptLegacy().catch(e => console.error(e.message));
   res.json(await projects.open(req.project.id, mainFile ? { mainFile } : {}));
 });
 project.post('/locate', async (req, res) => res.json(await projects.relocate(req.project.id, req.body.path)));
-project.delete('/', async (req, res) => { await projects.remove(req.project.id); res.json({ ok: true }); });
+project.delete('/', async (req, res) => { await projects.remove(req.project.id); await fs.rm(req.ws.meta, { recursive: true, force: true }); res.json({ ok: true }); });
 project.post('/reveal', async (req, res) => { await run('/usr/bin/open', ['-R', req.project.path]); res.json({ ok: true }); });
 project.get('/files', async (req, res) => {
   if (!await fs.stat(req.ws.root).then(s => s.isDirectory(), () => false)) throw httpError("This project's folder was moved or deleted. Go to All projects and choose Locate to point Paperdesk at it.", 404);
@@ -139,7 +138,7 @@ project.post('/task', async (req,res) => {
   if (files.length > 500) files.splice(500, Infinity, `- … and ${files.length - 500} more`);
   if (open && (!doc || doc.revision !== revision)) throw httpError('The open file changed. Reload it before asking the agent.',409);
   const style = await readStyle(), examples = await readJSON('examples.json', []);
-  res.json({ id: await startJob({ root: req.ws.root, revisions }, run => askAI({
+  res.json({ id: await startJob({ ws: req.ws, revisions }, run => askAI({
     ...run, instruction, mode: 'task', text: doc?.text, style, examples: examples.slice(-8), folder: req.ws.root, files, open: doc?.path, main: typeof main === 'string' ? main : '', attachments,
     history: history.slice(-12).map(m => ({ role: m.role, text: m.text.slice(0, 4000) })),
   })) });
@@ -147,7 +146,7 @@ project.post('/task', async (req,res) => {
 app.post('/api/tasks/:id/apply', async (req,res) => {
   const job=jobs.get(req.params.id);
   if (!job || job.status !== 'done') throw httpError('The agent result is not ready.',409);
-  job.applied ??= new Workspace(job.root,appDir).apply(job.result.edits,job.revisions);
+  job.applied ??= job.ws.apply(job.result.edits,job.revisions);
   res.json(await job.applied);
 });
 project.get('/document', async (req, res) => res.json(await req.ws.read(req.query.path)));
@@ -165,87 +164,9 @@ project.get('/file', async (req, res) => {
 project.post('/rename', async (req, res) => res.json({ path: await req.ws.rename(req.body.from, req.body.to) }));
 project.delete('/file', async (req, res) => { await req.ws.trash(req.query.path); res.json({ ok: true }); });
 project.post('/clean', async (req, res) => res.json({ removed: await req.ws.clean() }));
-project.post('/compile', async (req, res) => {
-  const workspace = req.ws, { root } = workspace, relative = req.body.path;
-  if (!String(relative).endsWith('.tex')) throw httpError('Choose a .tex file.');
-  const result = await workspace.exclusive(relative, async () => {
-    const doc = await workspace.read(relative);
-    if (doc.revision !== req.body.revision) throw httpError('Save your latest changes before compiling.', 409);
-    const file = await workspace.resolve(relative);
-    const { fingerprint } = await sourceState(workspace);
-    const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'paperdesk-build-'));
-    // TeX records real paths, which differ from the workspace path under a symlink.
-    const realRoot = await fs.realpath(root), realDir = await fs.realpath(path.dirname(file));
-    const sourceName = input => path.relative(realRoot, path.resolve(realDir, input));
-    // Log entries point at workspace files when they can; package files keep only their name.
-    const located = entries => entries.map(e => {
-      const name = e.file && sourceName(e.file);
-      return name && !name.startsWith('..') && !path.isAbsolute(name) ? { ...e, file:name } : { ...e, file:null, origin:e.file && path.basename(e.file) };
-    });
-    try {
-      let engine;
-      try { engine = await compileLatex(file, doc.text, temp); }
-      catch (e) { if (e.diagnostics) e.diagnostics = located(e.diagnostics); throw e; }
-      const diagnostics = located(parseLog(await fs.readFile(path.join(temp, path.basename(file, '.tex') + '.log'), 'utf8').catch(() => '')));
-      const output = file.replace(/\.tex$/, '.pdf');
-      await workspace.resolve(path.relative(root, output), false);
-      const compiled = await fs.readFile(path.join(temp, path.basename(output)));
-      const rawSync = gunzipSync(await fs.readFile(path.join(temp,path.basename(file,'.tex')+'.synctex.gz'))).toString('utf8');
-      const sourceMap = parseSourceMap(rawSync);
-      const inputs = {};
-      for (const input of sourceMap.files) {
-        try {
-          const name = sourceName(input), resolved = await workspace.resolve(name);
-          if (resolved.endsWith('.tex')) inputs[name] = hash(await fs.readFile(resolved));
-        } catch { /* Package inputs outside the workspace are not editable. */ }
-      }
-      if ((await sourceState(workspace)).fingerprint !== fingerprint || (await workspace.read(relative)).revision !== doc.revision) throw httpError('Source changed during compilation. Compile again.',409);
-      sourceMap.records = sourceMap.records.map(r=>({...r,path:sourceName(r.path)})).filter(r=>inputs[r.path]);
-      const metadata = { fingerprint, engine, revision:doc.revision, pdfHash:hash(compiled), inputs, records:sourceMap.records };
-      const mapDir = await workspace.resolve(path.relative(root,path.join(path.dirname(file),'.paperdesk','sync')),false);
-      await fs.mkdir(mapDir,{recursive:true});
-      await atomicWrite(output, compiled);
-      await atomicWrite(path.join(mapDir,path.basename(file)+'.json'),JSON.stringify(metadata));
-      return { pdf: path.relative(root, output), revision: doc.revision, engine, fingerprint, version: metadata.pdfHash, diagnostics };
-    } finally { await fs.rm(temp, { recursive: true, force: true }); }
-  }); res.json(result);
-});
-project.post('/inverse-search', async (req,res) => {
-  const workspace = req.ws, { root } = workspace, { path: primary, revision, page, x, y } = req.body;
-  if (!Number.isInteger(page) || page<1 || !Number.isFinite(x) || !Number.isFinite(y) || x<0 || y<0) throw httpError('Invalid PDF location.');
-  const result = await workspace.exclusive(primary,async()=>{
-    const doc=await workspace.read(primary);
-    const file=await workspace.resolve(primary);
-    const mapFile=await workspace.resolve(path.relative(root,path.join(path.dirname(file),'.paperdesk','sync',path.basename(file)+'.json')),false);
-    let map;
-    try { map=JSON.parse(await fs.readFile(mapFile,'utf8')); }
-    catch(e) { if(e.code==='ENOENT')throw httpError('Compile once to enable PDF-to-source navigation.',409);throw e; }
-    if((req.body.version && req.body.version!==map.pdfHash) || map.revision!==revision || doc.revision!==map.revision)throw httpError('The preview is out of date. Compile again before jumping to source.',409);
-    if(map.fingerprint && (await sourceState(workspace)).fingerprint!==map.fingerprint)throw httpError('A source file changed. Compile again before jumping to source.',409);
-    const output=await workspace.resolve(primary.replace(/\.tex$/,'.pdf'));
-    if(hash(await fs.readFile(output))!==map.pdfHash)throw httpError('The PDF changed. Compile again before jumping to source.',409);
-    for(const [input,expected] of Object.entries(map.inputs)) {
-      const inputFile=await workspace.resolve(input);
-      if(hash(await fs.readFile(inputFile))!==expected)throw httpError('A source file changed. Compile again before jumping to source.',409);
-    }
-    const match=inverseSearch(map.records,page,x,y);
-    if(!match)throw httpError('No source location on this page.',404);
-    await workspace.resolve(match.path);
-    const { word, before, after } = req.body;
-    if(typeof word!=='string' || !word.trim() || word.length>200)return {path:match.path,line:match.line};
-    const source=(await workspace.read(match.path)).text;
-    return {path:match.path,line:refineLine(map.records,match,source,{word,before:String(before??'').slice(-200),after:String(after??'').slice(0,200)})};
-  });
-  res.json(result);
-});
-project.get('/history', async (req, res) => {
-  const workspace = req.ws, { root } = workspace, file = await workspace.resolve(req.query.path);
-  const history = path.join(path.dirname(file), '.paperdesk', 'history');
-  await workspace.resolve(path.relative(root, history), false);
-  let names = []; try { names = await fs.readdir(history); } catch(e) { if (e.code !== 'ENOENT') throw e; }
-  const versions = await Promise.all(names.filter(n => n.endsWith('.json')).sort().reverse().map(async n => ({ id: n, ...JSON.parse(await fs.readFile(path.join(history, n), 'utf8')) })));
-  res.json(versions.filter(v => v.path === req.query.path));
-});
+project.post('/compile', async (req, res) => res.json(await buildPdf(req.ws, req.body.path, req.body.revision)));
+project.post('/inverse-search', async (req, res) => res.json(await locateSource(req.ws, req.body)));
+project.get('/history', async (req, res) => res.json(await req.ws.history(req.query.path)));
 app.get('/api/style', async (req, res) => res.json({ text: await readStyle(), examples: (await readJSON('examples.json', [])).length }));
 app.put('/api/style', async (req, res) => {
   if (typeof req.body.text !== 'string' || req.body.text.length > 20000) throw httpError('Invalid style profile.');
@@ -261,7 +182,7 @@ project.post('/style/suggest', async (req, res) => {
   if (!examples.length) throw httpError('Write or revise some answers first. Human edits become examples after saving.');
   res.json({ id: await startJob({ file, revision }, run => askAI({ ...run, instruction, mode: 'style', text: doc.text, style, examples })) });
 });
-app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {revisions,applied,controller,...visible}=job; res.json(visible); });
+app.get('/api/jobs/:id', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists. Please retry.', 404); const {ws,revisions,applied,controller,...visible}=job; res.json(visible); });
 app.post('/api/jobs/:id/stop', (req, res) => { const job = jobs.get(req.params.id); if (!job) throw httpError('Request no longer exists.', 404); job.controller.abort(); res.json({ ok: true }); });
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(appDir, 'dist')));

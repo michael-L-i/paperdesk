@@ -13,7 +13,7 @@ test('create, save, recover and reject stale concurrent writes', async () => {
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   assert.equal(results.find(r => r.status === 'rejected').reason.status, 409);
   assert.equal((await ws.read(original.path)).text, 'first');
-  const history = path.join(root, 'Course/Practice_1/.paperdesk/history');
+  const history = path.join(root, '.paperdesk/history');
   const snapshot = JSON.parse(await fs.readFile(path.join(history, (await fs.readdir(history))[0])));
   assert.equal(snapshot.text, original.text);
   await assert.rejects(ws.create('Course/Practice_1'), /already has/);
@@ -35,6 +35,21 @@ test('import keeps original bytes and rolls back when destination conflicts', as
   await assert.rejects(ws.create('Conflict', 'original.pdf'));
   assert.equal(await fs.readFile(path.join(root, 'Conflict/source.pdf'), 'utf8'), 'keep');
   await assert.rejects(fs.stat(path.join(root, 'Conflict/main.tex')), { code: 'ENOENT' });
+});
+test('move history from old .paperdesk folders into app data', async () => {
+  const meta = await fs.mkdtemp(path.join(os.tmpdir(), 'paperdesk-meta-')), outside = new Workspace(root, path.join(root, 'app'), meta);
+  try {
+    await fs.mkdir(path.join(root, 'hw/.paperdesk/history'), { recursive: true });
+    await fs.mkdir(path.join(root, 'hw/.paperdesk/sync'));
+    await fs.writeFile(path.join(root, 'hw/a.tex'), 'new');
+    await fs.writeFile(path.join(root, 'hw/.paperdesk/history/1-old.json'), JSON.stringify({ path: 'hw/a.tex', text: 'old', origin: 'human', date: '2026-01-01T00:00:00.000Z' }));
+    await outside.adoptLegacy();
+    await assert.rejects(fs.stat(path.join(root, 'hw/.paperdesk')), { code: 'ENOENT' });
+    const saved = await outside.save('hw/a.tex', 'newer', (await outside.read('hw/a.tex')).revision);
+    assert.deepEqual((await outside.history('hw/a.tex')).map(v => v.text), ['new', 'old']);
+    assert.deepEqual(await fs.readdir(path.join(root, 'hw')), ['a.tex'], 'Nothing but the user\'s files stays in the project');
+    assert.equal(saved.text, 'newer');
+  } finally { await fs.rm(meta, { recursive: true, force: true }); }
 });
 test('clean up only the build files beside a LaTeX source', async () => {
   await fs.mkdir(path.join(root, 'notes'));

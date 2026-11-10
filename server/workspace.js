@@ -44,7 +44,8 @@ export async function withLock(key, fn) {
   try { return await next; } finally { if (locks.get(key) === next) locks.delete(key); }
 }
 export class Workspace {
-  constructor(root, appDir) { this.root = path.resolve(root); this.appDir = appDir; }
+  // `meta` holds the project's save history and PDF source maps; the server keeps it in app data, outside the project.
+  constructor(root, appDir, meta) { this.root = path.resolve(root); this.appDir = appDir; this.meta = meta || path.join(this.root, '.paperdesk'); }
   async resolve(relative = '', existing = true) {
     if (typeof relative !== 'string' || relative.includes('\0')) throw httpError('Invalid path.');
     const target = path.resolve(this.root, relative);
@@ -133,16 +134,33 @@ export class Workspace {
       if (current.revision !== revision) throw httpError('This file changed on disk. Your draft is preserved. Reopen the file to load the disk version.', 409);
       if (current.text === text) return current;
       const file = await this.resolve(relative);
-      const meta = path.join(path.dirname(file), '.paperdesk');
-      await this.resolve(path.relative(this.root, path.join(meta, 'history')), false);
-      await fs.mkdir(path.join(meta, 'history'), { recursive: true });
+      const dir = path.join(this.meta, 'history');
+      await fs.mkdir(dir, { recursive: true });
       const id = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-      await fs.writeFile(path.join(meta, 'history', `${id}.json`), JSON.stringify({ path: relative, text: current.text, origin, date: new Date().toISOString() }));
+      await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify({ path: relative, text: current.text, origin, date: new Date().toISOString() }));
       await atomicWrite(file, text);
-      const entries = (await fs.readdir(path.join(meta, 'history'))).sort();
-      for (const old of entries.slice(0, Math.max(0, entries.length - 80))) await fs.unlink(path.join(meta, 'history', old));
+      const entries = (await fs.readdir(dir)).sort();
+      for (const old of entries.slice(0, Math.max(0, entries.length - 200))) await fs.unlink(path.join(dir, old));
       return { path: relative, text, revision: hash(text), previous: current.text };
     });
+  }
+  // Earlier versions of one file, newest first.
+  async history(relative) {
+    await this.resolve(relative);
+    const dir = path.join(this.meta, 'history'), names = await fs.readdir(dir).catch(e => { if (e.code === 'ENOENT') return []; throw e; });
+    const versions = await Promise.all(names.filter(n => n.endsWith('.json')).sort().reverse().map(async n => ({ id: n, ...JSON.parse(await fs.readFile(path.join(dir, n), 'utf8')) })));
+    return versions.filter(v => v.path === relative);
+  }
+  // Where the source map for a main document's PDF is kept.
+  syncFile(main) { return path.join(this.meta, 'sync', main + '.json'); }
+  // Paperdesk 0.1 kept history in .paperdesk folders inside the project; move it into `meta`.
+  async adoptLegacy() {
+    for await (const [dir] of this.folders()) {
+      const old = path.join(dir, '.paperdesk');
+      if (old === this.meta || !await fs.lstat(old).then(s => s.isDirectory(), () => false)) continue;
+      await fs.cp(path.join(old, 'history'), path.join(this.meta, 'history'), { recursive: true }).catch(e => { if (e.code !== 'ENOENT') throw e; });
+      await fs.rm(old, { recursive: true });
+    }
   }
   // Applies the agent's complete-file edits. Every edit is checked against the revisions
   // seen when the request started before any file is written.
