@@ -10,8 +10,9 @@ import { askAI } from './ai.js';
 import { gunzipSync } from 'node:zlib';
 import { parseSourceMap, inverseSearch, refineLine } from './synctex.js';
 import { hash } from './workspace.js';
-import { compileLatex } from './latex.js';
+import { compileLatex, parseLog } from './latex.js';
 import { Projects } from './projects.js';
+import { sourceState, projectState } from './project-state.js';
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = path.resolve(process.env.PAPERDESK_DATA_DIR || path.join(appDir, '.data'));
 await fs.mkdir(dataDir, { recursive: true });
@@ -76,6 +77,9 @@ project.post('/reveal', async (req, res) => { await run('/usr/bin/open', ['-R', 
 project.get('/files', async (req, res) => {
   if (!await fs.stat(req.ws.root).then(s => s.isDirectory(), () => false)) throw httpError("This project's folder was moved or deleted. Remove it from your projects and open it again.", 404);
   res.json(await req.ws.list());
+});
+project.get('/state', async (req, res) => {
+  res.json(await req.ws.exclusive(req.query.main || 'project-state', () => projectState(req.ws, req.query.main, req.query.open)));
 });
 project.post('/new-document', async (req, res) => {
   const { name } = req.body;
@@ -153,17 +157,26 @@ project.post('/compile', async (req, res) => {
     const doc = await workspace.read(relative);
     if (doc.revision !== req.body.revision) throw httpError('Save your latest changes before compiling.', 409);
     const file = await workspace.resolve(relative);
+    const { fingerprint } = await sourceState(workspace);
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'paperdesk-build-'));
+    // TeX records real paths, which differ from the workspace path under a symlink.
+    const realRoot = await fs.realpath(root), realDir = await fs.realpath(path.dirname(file));
+    const sourceName = input => path.relative(realRoot, path.resolve(realDir, input));
+    // Log entries point at workspace files when they can; package files keep only their name.
+    const located = entries => entries.map(e => {
+      const name = e.file && sourceName(e.file);
+      return name && !name.startsWith('..') && !path.isAbsolute(name) ? { ...e, file:name } : { ...e, file:null, origin:e.file && path.basename(e.file) };
+    });
     try {
-      const engine = await compileLatex(file, doc.text, temp);
+      let engine;
+      try { engine = await compileLatex(file, doc.text, temp); }
+      catch (e) { if (e.diagnostics) e.diagnostics = located(e.diagnostics); throw e; }
+      const diagnostics = located(parseLog(await fs.readFile(path.join(temp, path.basename(file, '.tex') + '.log'), 'utf8').catch(() => '')));
       const output = file.replace(/\.tex$/, '.pdf');
       await workspace.resolve(path.relative(root, output), false);
       const compiled = await fs.readFile(path.join(temp, path.basename(output)));
       const rawSync = gunzipSync(await fs.readFile(path.join(temp,path.basename(file,'.tex')+'.synctex.gz'))).toString('utf8');
       const sourceMap = parseSourceMap(rawSync);
-      // TeX records real paths, which differ from the workspace path under a symlink.
-      const realRoot = await fs.realpath(root), realDir = await fs.realpath(path.dirname(file));
-      const sourceName = input => path.relative(realRoot, path.resolve(realDir, input));
       const inputs = {};
       for (const input of sourceMap.files) {
         try {
@@ -171,14 +184,14 @@ project.post('/compile', async (req, res) => {
           if (resolved.endsWith('.tex')) inputs[name] = hash(await fs.readFile(resolved));
         } catch { /* Package inputs outside the workspace are not editable. */ }
       }
-      if ((await workspace.read(relative)).revision !== doc.revision) throw httpError('Source changed during compilation. Compile again.',409);
+      if ((await sourceState(workspace)).fingerprint !== fingerprint || (await workspace.read(relative)).revision !== doc.revision) throw httpError('Source changed during compilation. Compile again.',409);
       sourceMap.records = sourceMap.records.map(r=>({...r,path:sourceName(r.path)})).filter(r=>inputs[r.path]);
-      const metadata = { revision:doc.revision, pdfHash:hash(compiled), inputs, records:sourceMap.records };
+      const metadata = { fingerprint, engine, revision:doc.revision, pdfHash:hash(compiled), inputs, records:sourceMap.records };
       const mapDir = await workspace.resolve(path.relative(root,path.join(path.dirname(file),'.paperdesk','sync')),false);
       await fs.mkdir(mapDir,{recursive:true});
       await atomicWrite(output, compiled);
       await atomicWrite(path.join(mapDir,path.basename(file)+'.json'),JSON.stringify(metadata));
-      return { pdf: path.relative(root, output), revision: doc.revision, engine };
+      return { pdf: path.relative(root, output), revision: doc.revision, engine, fingerprint, version: metadata.pdfHash, diagnostics };
     } finally { await fs.rm(temp, { recursive: true, force: true }); }
   }); res.json(result);
 });
@@ -192,7 +205,8 @@ project.post('/inverse-search', async (req,res) => {
     let map;
     try { map=JSON.parse(await fs.readFile(mapFile,'utf8')); }
     catch(e) { if(e.code==='ENOENT')throw httpError('Compile once to enable PDF-to-source navigation.',409);throw e; }
-    if(map.revision!==revision || doc.revision!==map.revision)throw httpError('The preview is out of date. Compile again before jumping to source.',409);
+    if((req.body.version && req.body.version!==map.pdfHash) || map.revision!==revision || doc.revision!==map.revision)throw httpError('The preview is out of date. Compile again before jumping to source.',409);
+    if(map.fingerprint && (await sourceState(workspace)).fingerprint!==map.fingerprint)throw httpError('A source file changed. Compile again before jumping to source.',409);
     const output=await workspace.resolve(primary.replace(/\.tex$/,'.pdf'));
     if(hash(await fs.readFile(output))!==map.pdfHash)throw httpError('The PDF changed. Compile again before jumping to source.',409);
     for(const [input,expected] of Object.entries(map.inputs)) {
@@ -244,5 +258,5 @@ if (process.env.NODE_ENV === 'production') {
   const vite = await createServer({ root: appDir, server: { middlewareMode: true, fs: { strict: !appDir.includes(':') } }, appType: 'spa' });
   app.use(vite.middlewares);
 }
-app.use((e, req, res, next) => { console.error(e.message); res.status(e.status || (e.code === 'ENOENT' ? 404 : 500)).json({ error: e.message }); });
+app.use((e, req, res, next) => { console.error(e.message); res.status(e.status || (e.code === 'ENOENT' ? 404 : 500)).json({ error: e.message, diagnostics: e.diagnostics }); });
 app.listen(port, '127.0.0.1', () => console.log(`Paperdesk: http://localhost:${port}\nLibrary: ${library}`));

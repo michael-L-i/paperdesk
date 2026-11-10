@@ -142,3 +142,23 @@ button.tree-row,.tree-row>button:first-child{flex:1;min-width:0;justify-content:
 .pdf-links a:focus-visible{outline:2px solid #2563eb;outline-offset:1px;background:#2563eb18}
 .pdf-page:focus{outline:none}
 .pdf-link-error{position:sticky;bottom:0;background:#fff7f5;color:#944a3e;padding:10px;z-index:3}
+.preview-pdf{height:100%}
+.status.failed{color:#c0392b}
+.logs-button{padding:3px 7px;font-size:11px;color:#777;gap:6px}
+.logs-button[aria-pressed=true]{background:#ececec}
+.log-count{display:inline-flex;align-items:center;gap:3px;font-weight:600}
+.log-count.is-error{color:#d93025}.log-count.is-warning{color:#b06d00}
+.logs{height:100%;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
+.logs-title{display:flex;align-items:center;gap:10px}.logs-title strong{font-size:12px;font-weight:600}
+.logs-empty{padding:4px 2px}
+.log-entry{border:1px solid;border-left-width:4px;border-radius:5px;background:#fff;overflow:hidden;flex-shrink:0}
+.log-entry.is-error{border-color:#f2c0bb;border-left-color:#d93025}.log-entry.is-error .log-head{background:#fdf0ef}.log-entry.is-error .log-head>svg{color:#d93025}
+.log-entry.is-warning{border-color:#f3dfb8;border-left-color:#e0a000}.log-entry.is-warning .log-head{background:#fff8e8}.log-entry.is-warning .log-head>svg{color:#b06d00}
+.log-entry.is-typesetting{border-color:#d3dff0;border-left-color:#5b8bd0}.log-entry.is-typesetting .log-head{background:#f2f6fc}.log-entry.is-typesetting .log-head>svg{color:#3f6fb5}
+.log-head{display:flex;align-items:flex-start;gap:8px;padding:8px 10px}.log-head>svg{flex-shrink:0;margin-top:1px}
+.log-message{flex:1;min-width:0;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
+.log-location{flex-shrink:0;padding:0 2px;font-size:11px;color:#555;text-decoration:underline;text-underline-offset:2px;max-width:45%;overflow:hidden;text-overflow:ellipsis}
+span.log-location{text-decoration:none;color:#999}
+.log-entry pre{margin:0;padding:8px 10px;border-top:1px solid #eee;font-size:11px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;color:#444;font-family:'SFMono-Regular',Consolas,monospace}
+.log-boxes{display:flex;flex-direction:column;gap:8px}.log-boxes summary{cursor:pointer;color:#777;font-size:11px;padding:4px 2px}.log-boxes[open]>.log-entry{margin-top:8px}
+.cm-tooltip-lint .cm-diagnostic{font-size:12px;max-width:520px}.cm-tooltip-lint .cm-diagnostic pre{margin:4px 0 0;font-size:11px;color:#555;white-space:pre-wrap}

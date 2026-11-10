@@ -73,7 +73,7 @@ Without a magic comment, Paperdesk picks the engine from the preamble:
 - `luacode` or `\directlua` → LuaLaTeX
 - anything else → pdfLaTeX
 
-If the log shows the document needs a different engine, the build retries once with it. A failed build keeps the previous PDF and shows the first TeX error. Unsaved drafts survive a reload. If a file changes outside Paperdesk, you get a conflict warning instead of an overwrite.
+If the log shows the document needs a different engine, the build retries once with it. A failed build keeps the previous PDF and shows the first TeX error. Unsaved drafts survive a reload. Open tabs sync saved source changes and completed previews from disk every 1.5 seconds and when focused. Changes from another tab or an external editor automatically reload a clean editor and rebuild outdated previews when auto-compile is enabled. If you have an unsaved draft, it is preserved and a conflict warning prevents an overwrite.
 
 ## How the agent works
 

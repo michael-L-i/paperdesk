@@ -1,10 +1,8 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import CodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
-import { StreamLanguage } from '@codemirror/language';
-import { stex } from '@codemirror/legacy-modes/mode/stex';
-import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, ChevronRight, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image, House, Plus, Trash2, Star, Upload, PanelLeft, File, Folder, Square, Pencil } from 'lucide-react';
+import { FolderOpen, RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, ChevronRight, FilePlus, Download, MoreHorizontal, Paperclip, FileText, Image, House, Plus, Trash2, Star, Upload, PanelLeft, File, Folder, Square, Pencil, CircleX, TriangleAlert, Info } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -13,7 +11,8 @@ import 'katex/dist/katex.min.css';
 import './style.css';
 import PdfPreview from './PdfPreview.jsx';
 import { normalizeMathMarkdown } from './mathMarkdown.js';
-const extensions = [StreamLanguage.define(stex), EditorView.lineWrapping];
+import { latexExtensions, showDiagnostics } from './latexEditor.js';
+const extensions = [...latexExtensions, EditorView.lineWrapping];
 const textFile = name => /\.(tex|bib|sty|cls|bst|txt|md)$/i.test(name);
 const imageFile = name => /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
 // The document a file belongs to: its `% !TEX root`, itself if it has \documentclass, else null.
@@ -32,8 +31,33 @@ const request = (url, init) => fetch(url, init).catch(() => { throw new Error("C
 async function api(url, body, method = 'POST') {
   const res = await request('/api' + url, body === undefined ? {} : { method, headers: {'Content-Type':'application/json'}, body:JSON.stringify(body) });
   const result = await res.json();
-  if (!res.ok) throw new Error(result.error || 'Request failed.');
+  if (!res.ok) throw Object.assign(new Error(result.error || 'Request failed.'), { diagnostics: result.diagnostics });
   return result;
+}
+// Compile results, like Overleaf's logs: errors, then warnings, then bad boxes.
+const severities = [['error','errors',CircleX],['warning','warnings',TriangleAlert],['typesetting','typesetting',Info]];
+function LogsButton({ entries, open, onClick }) {
+  const count = severity => entries.filter(e => e.severity === severity).length;
+  const label = severities.map(([s,name]) => `${count(s)} ${name}`).join(', ');
+  return <button className="logs-button" aria-label={'Logs: '+label} title={label} aria-pressed={open} onClick={onClick}>
+    {severities.slice(0,2).map(([s,,Icon]) => count(s)>0&&<span key={s} className={'log-count is-'+s}><Icon size={13}/>{count(s)}</span>)}
+    Logs
+  </button>;
+}
+function Logs({ logs, hasPdf, onReveal, onClose }) {
+  const entries = logs ? severities.flatMap(([s]) => logs.entries.filter(e => e.severity === s)) : [];
+  const Entry = ({ entry }) => { const Icon = severities.find(([s]) => s === entry.severity)[2]; return <div className={'log-entry is-'+entry.severity}>
+    <div className="log-head"><Icon size={14}/><span className="log-message">{entry.message}</span>
+      {entry.file?<button className="log-location" onClick={()=>onReveal(entry)}>{entry.file}{entry.line?', line '+entry.line:''}</button>:entry.origin&&<span className="log-location">{entry.origin}{entry.line?', line '+entry.line:''}</span>}</div>
+    {entry.detail&&<pre>{entry.detail}</pre>}
+  </div>; };
+  const boxes = entries.filter(e => e.severity === 'typesetting');
+  return <div className="logs" role="region" aria-label="Compile logs">
+    <div className="logs-title"><strong>{logs?.failed?'Compile failed':'Compiled'}</strong><span className="muted">{logs?.failed&&hasPdf?'Showing the last PDF that compiled.':''}</span><div className="spacer"/><button aria-label="Close logs" title="Back to the PDF" onClick={onClose}><X size={14}/></button></div>
+    {!entries.length&&<p className="muted logs-empty">{logs?'No errors or warnings.':'Compile to see the logs.'}</p>}
+    {entries.filter(e => e.severity !== 'typesetting').map((entry,i) => <Entry key={i} entry={entry}/>)}
+    {boxes.length>0&&<details className="log-boxes"><summary>{boxes.length} typesetting {boxes.length===1?'warning':'warnings'} (overfull or underfull boxes)</summary>{boxes.map((entry,i) => <Entry key={i} entry={entry}/>)}</details>}
+  </div>;
 }
 // Folders start collapsed, except those leading to the open file. Dropped files upload into the folder under them.
 const dialogTitles = { new: 'New file', rename: 'Rename', style: 'Writing style', history: 'History' };
@@ -86,6 +110,7 @@ function Editor({ id, go }) {
   const [doc,setDoc]=useState(null), [text,setText]=useState(''), [status,setStatus]=useState('');
   const [autoCompile,setAutoCompile]=useState(()=>localStorage.getItem('paperdesk:autoCompile')!=='false');
   const [pdf,setPdf]=useState(null), [compiling,setCompiling]=useState(false), [error,setError]=useState('');
+  const [logs,setLogs]=useState(null), [logsOpen,setLogsOpen]=useState(false), goodLogs=useRef(null);
   const [dialog,setDialog]=useState(null), [newName,setNewName]=useState('main.tex');
   const [historyOpen,setHistoryOpen]=useState(false), [prompt,setPrompt]=useState(''), [attachments,setAttachments]=useState([]);
   const [historyHeight,setHistoryHeight]=useState(180), [resizing,setResizing]=useState(false);
@@ -93,9 +118,11 @@ function Editor({ id, go }) {
   const [job,setJob]=useState(null), [starting,setStarting]=useState(false), [messages,setMessages]=useState([]), [activity,setActivity]=useState('');
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
   const editorView=useRef(null), primaryFile=useRef(null), fileInput=useRef(null), uploadInput=useRef(null);
-  const state=useRef({doc:null,text:'',files:[]}), saves=useRef(Promise.resolve()), building=useRef(false), attemptedBuild=useRef('');
+  const state=useRef({doc:null,text:'',files:[]}), saves=useRef(Promise.resolve()), building=useRef(false), attemptedBuild=useRef(''), sourceFingerprint=useRef(null);
+  const [syncVersion,setSyncVersion]=useState(0);
   state.current={doc,text,files:files||[]};
   const aiBusy=!!job || starting;
+  const syncState=useRef({});syncState.current={pdf,status,aiBusy};
   const fail=e=>setError(e.message);
   const call=(url,body,method)=>api('/projects/'+id+url,body,method);
   const fileURL=(path,version='')=>'/api/projects/'+id+'/file?path='+encodeURIComponent(path)+'&v='+version;
@@ -108,7 +135,7 @@ function Editor({ id, go }) {
   }
   // The main document is what compiles and shows in the PDF pane, whichever file is open.
   function setMain(file, list=state.current.files) {
-    primaryFile.current=file;attemptedBuild.current='';setMainFile(file);
+    primaryFile.current=file;attemptedBuild.current='';setMainFile(file);setLogs(null);
     call('',{mainFile:file},'PATCH').catch(()=>{});
     const output=file.replace(/\.tex$/,'.pdf');
     setPdf(list.includes(output)?{path:output,version:Date.now(),revision:null}:null);
@@ -168,7 +195,7 @@ function Editor({ id, go }) {
     const snapshot=state.current;
     if(snapshot.text!==snapshot.doc?.text || pdf.editorPath!==snapshot.doc?.path || pdf.editorRevision!==snapshot.doc?.revision){setError('The preview is out of date. Wait for compilation or click Compile before jumping to source.');return;}
     try {
-      const match=await call('/inverse-search',{path:pdf.path.replace(/\.pdf$/,'.tex'),revision:pdf.revision,...location});
+      const match=await call('/inverse-search',{path:pdf.path.replace(/\.pdf$/,'.tex'),revision:pdf.revision,version:pdf.version,...location});
       if(state.current.doc!==snapshot.doc || state.current.text!==snapshot.text)return;
       if(match.path!==snapshot.doc.path){
         const next=await call('/document?path='+encodeURIComponent(match.path));
@@ -185,24 +212,88 @@ function Editor({ id, go }) {
       });
     }catch(e){fail(e);}
   }
+  async function revealLog(entry) {
+    try {
+      if(entry.file!==state.current.doc?.path) await openFile(entry.file);
+      requestAnimationFrame(()=>{
+        const view=editorView.current;
+        if(!view||!entry.line)return;
+        const line=view.state.doc.line(Math.min(entry.line,view.state.doc.lines));
+        view.dispatch({selection:{anchor:line.from},effects:EditorView.scrollIntoView(line.from,{y:'center'})});
+        view.focus();
+      });
+    }catch(e){fail(e);}
+  }
+  // A failed build stops applying once the source is back to what the PDF was built from, such as
+  // after undoing the edit that broke it; that leaves nothing to recompile, so show the PDF's logs.
+  const pdfCurrent=!!pdf && pdf.editorPath===doc?.path && pdf.editorRevision===doc?.revision;
+  const failureStale=logs?.failed && (logs.editorPath!==doc?.path || logs.editorRevision!==doc?.revision);
+  const shownLogs=useMemo(()=>failureStale && pdfCurrent ? {failed:false,entries:goodLogs.current?.version===pdf.version?goodLogs.current.entries:[]} : logs,[logs,failureStale,pdfCurrent,pdf?.version]);
+  useEffect(()=>{
+    if(editorView.current) showDiagnostics(editorView.current,(shownLogs?.entries||[]).filter(e=>e.file===doc?.path));
+  },[shownLogs,doc?.path]);
   async function compile() {
     if(building.current || !state.current.doc || !primaryFile.current) return;
     attemptedBuild.current=state.current.doc.path+':'+state.current.doc.revision;
     building.current=true;setCompiling(true);
+    let primary, saved;
     try {
-      const saved=await save();
+      saved=await save();
       attemptedBuild.current=saved.path+':'+saved.revision;
-      const primary=primaryFile.current===saved.path?saved:await call('/document?path='+encodeURIComponent(primaryFile.current));
+      primary=primaryFile.current===saved.path?saved:await call('/document?path='+encodeURIComponent(primaryFile.current));
       const result=await call('/compile',{path:primary.path,revision:primary.revision});
       if(!state.current.files.includes(result.pdf)) refreshFiles().catch(()=>{});
-      if(primaryFile.current===primary.path) {setError('');setPdf({path:result.pdf,version:Date.now(),revision:result.revision,engine:result.engine,editorPath:saved.path,editorRevision:saved.revision});}
-    }catch(e){fail(e);}finally{building.current=false;setCompiling(false);}
+      if(primaryFile.current===primary.path) {setError('');goodLogs.current={version:result.version,entries:result.diagnostics||[]};setLogs({failed:false,entries:goodLogs.current.entries});setPdf({path:result.pdf,revision:result.revision,engine:result.engine,fingerprint:result.fingerprint,version:result.version,editorPath:saved.path,editorRevision:saved.revision});}
+    }catch(e){
+      // TeX errors go to the gutter and the logs, not the banner. Without a PDF to show, open the logs.
+      if(!e.diagnostics)fail(e);
+      else if(primaryFile.current===primary?.path){setLogs({failed:true,entries:e.diagnostics,editorPath:saved.path,editorRevision:saved.revision});if(!syncState.current.pdf)setLogsOpen(true);}
+    }finally{building.current=false;setCompiling(false);}
   }
   useEffect(()=>{
     if(!autoCompile || !doc || status!=='Saved' || aiBusy || compiling || (pdf?.editorPath===doc.path&&pdf?.editorRevision===doc.revision)) return;
     if(attemptedBuild.current===doc.path+':'+doc.revision)return;
     const timer=setTimeout(compile,1000);return()=>clearTimeout(timer);
-  },[doc?.path,doc?.revision,status,aiBusy,compiling,autoCompile]);
+  },[doc?.path,doc?.revision,status,aiBusy,compiling,autoCompile,syncVersion,pdf?.editorPath,pdf?.editorRevision]);
+  // Reconcile every tab against disk, including changes made by external editors.
+  // Never replace a draft or race an in-flight save/build.
+  useEffect(()=>{
+    let stopped=false,fetching=false;
+    const sync=async()=>{
+      if(fetching || building.current || syncState.current.aiBusy || syncState.current.status==='Saving…')return;
+      const before=state.current, primary=primaryFile.current;
+      if(!before.doc || !primary)return;
+      fetching=true;
+      try {
+        const result=await call('/state?main='+encodeURIComponent(primary)+'&open='+encodeURIComponent(before.doc.path));
+        if(stopped || building.current || primaryFile.current!==primary || state.current.doc!==before.doc || state.current.text!==before.text || syncState.current.status==='Saving…')return;
+        setFiles(result.files);state.current.files=result.files;
+        const changed=sourceFingerprint.current!==null && sourceFingerprint.current!==result.fingerprint;
+        sourceFingerprint.current=result.fingerprint;
+        if(result.doc.revision!==before.doc.revision){
+          if(before.text!==before.doc.text){
+            setStatus('Save failed');setError('This file changed in another tab or on disk. Your draft is preserved. Download it or choose Use disk version.');
+            return;
+          }
+          accept(result.doc);
+        }
+        const current=state.current, preview=result.preview;
+        if(preview?.current && current.text===current.doc.text){
+          const previous=syncState.current.pdf;
+          if(previous?.version!==preview.version || previous.editorPath!==current.doc.path || previous.editorRevision!==current.doc.revision){
+            setPdf({...preview,fingerprint:result.fingerprint,editorPath:current.doc.path,editorRevision:current.doc.revision});
+            setError(e=>/preview is out of date|PDF changed|source file changed/i.test(e)?'':e);
+          }
+        } else if(changed || syncState.current.pdf?.editorPath){
+          setPdf(p=>p&&{...p,editorPath:null});
+          attemptedBuild.current='';setSyncVersion(v=>v+1);
+        }
+      }catch(e){if(!stopped)fail(e);}finally{fetching=false;}
+    };
+    sync();const timer=setInterval(sync,1500);
+    window.addEventListener('focus',sync);
+    return()=>{stopped=true;clearInterval(timer);window.removeEventListener('focus',sync);};
+  },[]);
   useEffect(()=>{
     const key=e=>{
       if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();save().catch(fail);}
@@ -325,7 +416,7 @@ function Editor({ id, go }) {
         <button aria-label="Rename file" title="Rename" disabled={aiBusy} onClick={()=>{setNewName(viewing);setDialog('rename');}}><Pencil size={14}/></button>
         <button aria-label="Delete file" title="Move to Trash" disabled={aiBusy} onClick={deleteFile}><Trash2 size={14}/></button>
         <button aria-label="Close file" title="Back to the editor" onClick={()=>setViewing(null)}><X size={14}/></button>
-      </>}</div>{viewing&&<FilePane file={viewing} url={fileURL(viewing)}/>}<div className="editor" hidden={!!viewing}>{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true}}/>:<div className="empty">{files?'Select a .tex file or ask the agent to create one.':''}</div>}</div>
+      </>}</div>{viewing&&<FilePane file={viewing} url={fileURL(viewing)}/>}<div className="editor" hidden={!!viewing}>{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true,bracketMatching:false}}/>:<div className="empty">{files?'Select a .tex file or ask the agent to create one.':''}</div>}</div>
       <section className={'agent'+(resizing?' resizing':'')} onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(!e.dataTransfer.files.length||!files)return;e.preventDefault();attach([...e.dataTransfer.files]);}}>
         {historyOpen&&<div className="agent-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);setResizing(true);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onLostPointerCapture={()=>{historyDrag.current=null;setResizing(false);}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/>}
         <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
@@ -341,7 +432,7 @@ function Editor({ id, go }) {
         </div>
       </section>
       </section>
-      <section className="right"><div className="panel-title"><span>PDF{pdf?.engine&&' · '+pdf.engine}</span><div className="spacer"/><span className="status">{compiling?'Compiling…':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{pdf?<PdfPreview key={pdf.path} url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></section>
+      <section className="right"><div className="panel-title"><span>PDF{pdf?.engine&&' · '+pdf.engine}</span><div className="spacer"/><span className={'status'+(shownLogs?.failed&&!compiling?' failed':'')}>{compiling?'Compiling…':shownLogs?.failed?'Compile failed':pdf&&(pdf.editorPath!==doc?.path||pdf.editorRevision!==doc?.revision)?'Out of date':''}</span>{shownLogs&&<LogsButton entries={shownLogs.entries} open={logsOpen} onClick={()=>setLogsOpen(!logsOpen)}/>}{pdf&&<a href={fileURL(pdf.path,pdf.version)} download aria-label="Download PDF"><Download size={14}/></a>}</div><div className="preview">{logsOpen&&<Logs logs={shownLogs} hasPdf={!!pdf} onReveal={revealLog} onClose={()=>setLogsOpen(false)}/>}<div className="preview-pdf" hidden={logsOpen}>{pdf?<PdfPreview key={pdf.path} url={fileURL(pdf.path,pdf.version)} onSourceClick={jumpToSource}/>:<div className="empty">{compiling?'Compiling…':'No compiled PDF.'}</div>}</div></div></section>
     </main>
     {dialog&&<div className="backdrop"><section className="dialog" role="dialog" aria-modal="true" aria-label={dialogTitles[dialog]}><div className="dialog-title"><strong>{dialogTitles[dialog]}</strong><button aria-label="Close dialog" onClick={()=>setDialog(null)}><X size={16}/></button></div>
     {dialog==='new'&&<form onSubmit={e=>{e.preventDefault();createFile();}}><input autoFocus aria-label="Filename" placeholder="chapters/intro.tex or refs.bib" value={newName} onChange={e=>setNewName(e.target.value)}/><div className="dialog-bottom"><div className="spacer"/><button className="primary" type="submit" disabled={!newName.trim()}>Create</button></div></form>}
