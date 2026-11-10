@@ -38,6 +38,27 @@ export class Projects {
     dir = path.resolve(dir);
     return this.update(list => list.find(p => p.path === dir) || this.add(list, { name: path.basename(dir), kind: 'linked', path: dir }));
   }
+  // Points a project at its folder's new location. Other missing projects that moved with
+  // the same parent, such as a renamed course folder, follow it.
+  async relocate(id, dir) {
+    if (typeof dir !== 'string' || !path.isAbsolute(dir) || !await isDirectory(dir)) throw httpError('Choose a folder.');
+    dir = path.resolve(dir);
+    return this.update(async list => {
+      const project = list.find(p => p.id === id);
+      if (!project) throw httpError('Project not found.', 404);
+      if (list.some(p => p !== project && p.path === dir)) throw httpError('That folder is already a project.', 409);
+      const from = project.path.split(path.sep), to = dir.split(path.sep);
+      while (from.length > 1 && to.length > 1 && from.at(-1) === to.at(-1)) { from.pop(); to.pop(); }
+      const oldParent = from.join(path.sep) + path.sep, newParent = to.join(path.sep) + path.sep;
+      project.path = dir;
+      for (const other of list) {
+        if (!other.path.startsWith(oldParent) || await isDirectory(other.path)) continue;
+        const moved = newParent + other.path.slice(oldParent.length);
+        if (await isDirectory(moved) && !list.some(p => p.path === moved)) other.path = moved;
+      }
+      return project;
+    });
+  }
   async create(name) {
     name = String(name ?? '').trim().replace(/[/\\:\0-\x1f]/g, '-').slice(0, 100);
     if (!name || name.startsWith('.')) throw httpError('Enter a project name.');

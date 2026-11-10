@@ -23,6 +23,18 @@ test('link a folder once and list recently opened projects first', async () => {
   await fs.rm(path.join(root, 'Course'), { recursive: true });
   assert.equal((await projects.list())[0].missing, true);
 });
+test('locate a moved project and the missing projects that moved with it', async () => {
+  for (const dir of ['old/EE186/HW1', 'old/EE186/HW2', 'elsewhere/HW3']) await fs.mkdir(path.join(root, dir), { recursive: true });
+  const [hw1, hw2, hw3] = await Promise.all(['old/EE186/HW1', 'old/EE186/HW2', 'elsewhere/HW3'].map(dir => projects.link(path.join(root, dir))));
+  await fs.rename(path.join(root, 'old'), path.join(root, 'new'));
+  assert.deepEqual((await projects.list()).map(p => p.missing).sort(), [false, true, true]);
+  await assert.rejects(projects.relocate(hw1.id, path.join(root, 'elsewhere/HW3')), { status: 409 });
+  await assert.rejects(projects.relocate(hw1.id, path.join(root, 'gone')), { status: 400 });
+  assert.equal((await projects.relocate(hw1.id, path.join(root, 'new/EE186/HW1'))).id, hw1.id);
+  assert.equal((await projects.get(hw2.id)).path, path.join(root, 'new/EE186/HW2'));
+  assert.equal((await projects.get(hw3.id)).path, path.join(root, 'elsewhere/HW3'));
+  assert.ok((await projects.list()).every(p => !p.missing));
+});
 test('create library projects in their own folders', async () => {
   const first = await projects.create('Thesis'), second = await projects.create(' Thesis ');
   assert.equal(first.kind, 'library');

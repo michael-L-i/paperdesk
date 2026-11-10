@@ -68,10 +68,11 @@ project.patch('/', async (req, res) => {
   if (mainFile) await req.ws.resolve(mainFile);
   res.json(await projects.open(req.project.id, mainFile ? { mainFile } : {}));
 });
+project.post('/locate', async (req, res) => res.json(await projects.relocate(req.project.id, req.body.path)));
 project.delete('/', async (req, res) => { await projects.remove(req.project.id); res.json({ ok: true }); });
 project.post('/reveal', async (req, res) => { await run('/usr/bin/open', ['-R', req.project.path]); res.json({ ok: true }); });
 project.get('/files', async (req, res) => {
-  if (!await fs.stat(req.ws.root).then(s => s.isDirectory(), () => false)) throw httpError("This project's folder was moved or deleted. Remove it from your projects and open it again.", 404);
+  if (!await fs.stat(req.ws.root).then(s => s.isDirectory(), () => false)) throw httpError("This project's folder was moved or deleted. Go to All projects and choose Locate to point Paperdesk at it.", 404);
   res.json(await req.ws.list());
 });
 project.get('/state', async (req, res) => {

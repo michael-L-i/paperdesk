@@ -19,6 +19,10 @@ export default function Home({ go }) {
     setMenu(false);setError('');
     try{const picked=await api('/choose-directory',{});if(!picked.cancelled)go('/p/'+(await api('/projects',{path:picked.path})).id);}catch(e){fail(e);}
   }
+  async function locate(p) {
+    setError('');
+    try{const picked=await api('/choose-directory',{});if(!picked.cancelled){await api('/projects/'+p.id+'/locate',{path:picked.path});await load();}}catch(e){fail(e);}
+  }
   async function create(e) {
     e.preventDefault();
     try{go('/p/'+(await api('/projects',{name})).id);}catch(e){fail(e);}
@@ -44,7 +48,7 @@ export default function Home({ go }) {
         <thead><tr><th>Name</th><th className="location">Location</th><th>Last opened</th><th/></tr></thead>
         <tbody>{shown.map(p=><tr key={p.id}>
           <td><a href={'/p/'+p.id} onClick={e=>{if(e.metaKey||e.ctrlKey)return;e.preventDefault();go('/p/'+p.id);}}>{p.name}</a></td>
-          <td className="location" title={p.path}>{p.missing?'Folder missing':p.kind==='library'?'Library':p.path.replace(/^\/Users\/[^/]+/,'~')}</td>
+          <td className="location" title={p.path}>{p.missing?<button className="locate" title={'Was at '+p.path} onClick={()=>locate(p)}>Folder missing · Locate…</button>:p.kind==='library'?'Library':p.path.replace(/^\/Users\/[^/]+/,'~')}</td>
           <td className="muted">{ago(p.opened)}</td>
           <td className="row-actions">
             <button aria-label={'Show '+p.name+' in Finder'} title="Show in Finder" disabled={p.missing} onClick={()=>api('/projects/'+p.id+'/reveal',{}).catch(fail)}><FolderOpen size={14}/></button>
