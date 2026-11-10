@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
-import { RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, Download, MoreHorizontal, Paperclip, FileText, Image, House, Trash2, PanelLeft, Square, Pencil } from 'lucide-react';
+import { RefreshCw, X, ArrowUp, ChevronUp, ChevronDown, Download, MoreHorizontal, Paperclip, FileText, Image, House, Trash2, PanelLeft, Square, SquarePen, Pencil } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -44,7 +44,7 @@ export default function Editor({ id, go }) {
   const [historyOpen,setHistoryOpen]=useState(false), [prompt,setPrompt]=useState(''), [attachments,setAttachments]=useState([]);
   const [historyHeight,setHistoryHeight]=useState(180), [resizing,setResizing]=useState(false);
   const historyDrag=useRef(null), thread=useRef(null), composer=useRef(null);
-  const [job,setJob]=useState(null), [starting,setStarting]=useState(false), [messages,setMessages]=useState([]), [activity,setActivity]=useState('');
+  const [job,setJob]=useState(null), [starting,setStarting]=useState(false), [messages,setMessages]=useState(()=>{try{return JSON.parse(localStorage.getItem('paperdesk:chat:'+id))||[];}catch{return [];}}), [activity,setActivity]=useState('');
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
   const editorView=useRef(null), primaryFile=useRef(null), fileInput=useRef(null), uploadInput=useRef(null);
   const state=useRef({doc:null,text:'',files:[]}), saves=useRef(Promise.resolve()), building=useRef(false), attemptedBuild=useRef(''), sourceFingerprint=useRef(null);
@@ -272,6 +272,8 @@ export default function Editor({ id, go }) {
     const t=composer.current;if(!t)return;
     t.style.height='auto';t.style.height=Math.min(t.scrollHeight,160)+'px';
   },[prompt]);
+  // The conversation survives reloads and restarts; New chat clears it.
+  useEffect(()=>{try{localStorage.setItem('paperdesk:chat:'+id,JSON.stringify(messages.slice(-50)));}catch{}},[messages]);
   useEffect(()=>{thread.current?.scrollTo({top:thread.current.scrollHeight});},[messages,aiBusy,historyOpen]);
   useEffect(()=>{
     if(!job)return;
@@ -357,7 +359,7 @@ export default function Editor({ id, go }) {
       </>}</div>{viewing&&<FilePane file={viewing} url={fileURL(viewing)}/>}<div className="editor" hidden={!!viewing}>{doc?<CodeMirror onCreateEditor={view=>{editorView.current=view;}} className="latex-editor" value={text} height="100%" extensions={extensions} onChange={change} editable={!aiBusy} basicSetup={{foldGutter:true,highlightActiveLine:true,bracketMatching:false}}/>:<div className="empty">{files?'Select a .tex file or ask the agent to create one.':''}</div>}</div>
       <section className={'agent'+(resizing?' resizing':'')} onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(!e.dataTransfer.files.length||!files)return;e.preventDefault();attach([...e.dataTransfer.files]);}}>
         {historyOpen&&<div className="agent-resizer" role="separator" aria-label="Resize chat history" aria-orientation="horizontal" aria-valuemin={48} aria-valuemax={500} aria-valuenow={historyHeight} tabIndex={0} onPointerDown={e=>{historyDrag.current={y:e.clientY,height:historyHeight};e.currentTarget.setPointerCapture(e.pointerId);setResizing(true);}} onPointerMove={e=>{if(historyDrag.current)setHistoryHeight(Math.max(48,Math.min(500,historyDrag.current.height+historyDrag.current.y-e.clientY)));}} onLostPointerCapture={()=>{historyDrag.current=null;setResizing(false);}} onKeyDown={e=>{if(["ArrowUp","ArrowDown"].includes(e.key)){e.preventDefault();setHistoryHeight(h=>Math.max(48,Math.min(500,h+(e.key==="ArrowUp"?20:-20))));}}}/>}
-        <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/><button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
+        <div className="agent-title" onClick={()=>setHistoryOpen(!historyOpen)}><span>Agent</span><span className="status">{aiBusy&&!historyOpen?activity||'Working…':''}</span><div className="spacer"/>{messages.length>0&&!aiBusy&&<button aria-label="New chat" title="New chat" onClick={e=>{e.stopPropagation();setMessages([]);}}><SquarePen size={13}/></button>}<button aria-label={historyOpen?"Collapse chat history":"Expand chat history"} aria-expanded={historyOpen}>{historyOpen?<ChevronDown size={14}/>:<ChevronUp size={14}/>}</button></div>
         <div className="thread" ref={thread} style={{height:historyOpen?historyHeight:0}} inert={!historyOpen}><div className="thread-inner">
           {!messages.length&&!aiBusy&&<p className="thread-empty">Ask about anything in this folder, request an edit, or attach a file.</p>}
           {messages.map((m,i)=><div key={i} className={m.role==='You'?'message user':'message'}>{m.files?.length>0&&<div className="message-files">{m.files.map((f,j)=><span key={j} className="attachment">{imageFile(f.name)?<Image size={12}/>:<FileText size={12}/>}<span>{f.name}</span></span>)}</div>}{m.role==='You'?<p>{m.text}</p>:<div className="markdown"><Markdown {...markdown}>{normalizeMathMarkdown(m.text)}</Markdown></div>}{m.changed?.length>0&&<div className="message-files" aria-label="Changed files">{m.changed.map(f=><span key={f} className="attachment" title={'Changed '+f}><FileText size={12}/><span>{f}</span></span>)}</div>}</div>)}
