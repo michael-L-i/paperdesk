@@ -470,6 +470,42 @@ try {
   const goneFiles=await fetch(url+'/api/projects/'+gone.id+'/files');
   assert.equal(goneFiles.status,404);assert.match((await goneFiles.json()).error,/moved or deleted/);
   assert.equal((await fetch(url+'/api/projects/'+gone.id,{method:'DELETE'})).status,200,'A project with a missing folder can still be removed');
+  // A linked folder with code and data: documents show by default, other files are a click away,
+  // build files can be cleaned up, and Paperdesk leaves nothing of its own in the folder.
+  await fs.mkdir(path.join(root,'Old/Tidy/src'),{recursive:true});
+  for(const [name,text] of [['report.tex',latex],['report.aux','x'],['server.log','keep'],['src/top.v','module top; endmodule'],['data.csv','1,2']])await fs.writeFile(path.join(root,'Old/Tidy',name),text);
+  const post=(route,body)=>fetch(url+'/api'+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const tidy=await(await post('/projects',{path:path.join(root,'Old/Tidy')})).json();
+  await page.goto(url+'/p/'+tidy.id);
+  await page.locator('.pdf-page').first().waitFor();
+  assert.equal(await page.locator('.tree-row[data-path="data.csv"]').count(),0,'Non-document files are hidden by default');
+  await page.getByRole('button',{name:'Show 2 other files'}).click();
+  await page.locator('.tree-row[data-path="data.csv"]').waitFor();
+  await page.getByRole('button',{name:'Show documents only'}).click();
+  await page.getByRole('button',{name:'More'}).click();
+  await page.getByRole('button',{name:'Clean up build files'}).click();
+  await page.getByText('Moved 1 build file to the Trash').waitFor();
+  assert.deepEqual((await fs.readdir(path.join(root,'Old/Tidy'))).sort(),['data.csv','report.pdf','report.tex','server.log','src'],'Only build files beside a source are removed, and no .paperdesk folder is added');
+  // Moving the parent folder marks its projects missing; Locate re-points this one and its sibling.
+  await fs.mkdir(path.join(root,'Old/Sibling'));
+  const sibling=await(await post('/projects',{path:path.join(root,'Old/Sibling')})).json();
+  await fs.rename(path.join(root,'Old'),path.join(root,'Moved'));
+  await page.goto(url);
+  chosenDirectory='Moved/Tidy';
+  await page.locator('tr',{hasText:'Tidy'}).getByRole('button',{name:'Folder missing · Locate…'}).click();
+  await page.waitForFunction(()=>!document.body.textContent.includes('Folder missing'));
+  assert.equal((await(await fetch(url+'/api/projects')).json()).find(p=>p.id===sibling.id).path,path.join(root,'Moved/Sibling'));
+  // Settings show what is installed and save the agent choice.
+  await page.getByRole('button',{name:'Settings'}).click();
+  const settings=page.getByRole('dialog',{name:'Settings'});
+  await settings.getByText('Compiles your documents').waitFor();
+  assert.equal(await settings.getByRole('radio',{name:/Codex/}).isChecked(),true,'The installed agent is selected');
+  await settings.getByLabel('Model').fill('test-model');
+  await settings.getByRole('button',{name:'Save'}).click();
+  await settings.waitFor({state:'detached'});
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(root,'.app-data/settings.json'),'utf8')),{agent:'codex',model:'test-model',library:path.join(root,'library')});
+  await page.goto(url+'/p/'+tidy.id);
+  await page.locator('.tree-row[data-path="report.tex"]').waitFor();
   await page.setViewportSize({width:390,height:844});
   const tree=await page.locator('.tree').boundingBox(), editorBox=await page.locator('.left').boundingBox();
   assert.ok(tree.width>350 && tree.y+tree.height<=editorBox.y+1,'On a phone the file tree stacks above the editor');
