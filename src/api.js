@@ -1,7 +1,7 @@
 export const textFile = name => /\.(tex|bib|sty|cls|bst|txt|md)$/i.test(name);
 export const imageFile = name => /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
-// A network error means the server stopped, usually because its Terminal window was closed.
-export const request = (url, init) => fetch(url, init).catch(() => { throw new Error("Can't reach Paperdesk. Its server stopped, which happens when the Terminal window running it is closed. Double-click Start Paperdesk.command to start it again, then retry."); });
+// A network error means the server is not running.
+export const request = (url, init) => fetch(url, init).catch(() => { throw Object.assign(new Error("Can't reach Paperdesk. Start it again with Start Paperdesk.command or `paperdesk`, then retry."), { offline: true }); });
 export async function api(url, body, method = 'POST') {
   const res = await request('/api' + url, body === undefined ? {} : { method, headers: {'Content-Type':'application/json'}, body:JSON.stringify(body) });
   const result = await res.json();

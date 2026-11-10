@@ -47,7 +47,7 @@ export default function Editor({ id, go }) {
   const [menu,setMenu]=useState(false), [style,setStyle]=useState(''), [examples,setExamples]=useState(0), [history,setHistory]=useState([]);
   const editorView=useRef(null), primaryFile=useRef(null), fileInput=useRef(null), uploadInput=useRef(null);
   const state=useRef({doc:null,text:'',files:[]}), saves=useRef(Promise.resolve()), building=useRef(false), attemptedBuild=useRef(''), sourceFingerprint=useRef(null);
-  const [syncVersion,setSyncVersion]=useState(0);
+  const [syncVersion,setSyncVersion]=useState(0), [offline,setOffline]=useState(false);
   state.current={doc,text,files:files||[]};
   const aiBusy=!!job || starting;
   const syncState=useRef({});syncState.current={pdf,status,aiBusy};
@@ -194,6 +194,7 @@ export default function Editor({ id, go }) {
       fetching=true;
       try {
         const result=await call('/state?main='+encodeURIComponent(primary)+'&open='+encodeURIComponent(before.doc.path));
+        setOffline(false);
         if(stopped || building.current || primaryFile.current!==primary || state.current.doc!==before.doc || state.current.text!==before.text || syncState.current.status==='Saving…')return;
         setFiles(result.files);state.current.files=result.files;
         const changed=sourceFingerprint.current!==null && sourceFingerprint.current!==result.fingerprint;
@@ -216,7 +217,8 @@ export default function Editor({ id, go }) {
           setPdf(p=>p&&{...p,editorPath:null});
           attemptedBuild.current='';setSyncVersion(v=>v+1);
         }
-      }catch(e){if(!stopped)fail(e);}finally{fetching=false;}
+      // While the server restarts, wait quietly instead of raising an error.
+      }catch(e){if(stopped)return;if(e.offline)setOffline(true);else fail(e);}finally{fetching=false;}
     };
     sync();const timer=setInterval(sync,1500);
     window.addEventListener('focus',sync);
@@ -330,7 +332,7 @@ export default function Editor({ id, go }) {
       <span className="project-name" title={project?.path}>{project?.name}</span>
       <span className="separator"/>
       <button aria-label={treeOpen?'Hide files':'Show files'} title={treeOpen?'Hide files':'Show files'} aria-pressed={treeOpen} onClick={()=>{setTreeOpen(!treeOpen);localStorage.setItem('paperdesk:tree',String(!treeOpen));}}><PanelLeft size={15}/></button>
-      <span className="status">{status}</span>
+      <span className="status">{offline?'Reconnecting…':status}</span>
       <div className="spacer"/>
       
       <button disabled={!doc||compiling||aiBusy} onClick={()=>{setError('');compile();}}><RefreshCw size={14}/>Compile</button>

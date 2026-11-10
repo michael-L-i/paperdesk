@@ -1,18 +1,12 @@
 #!/bin/zsh
-set -e
+# Double-click to open Paperdesk. The first time, this sets it up to run in the background,
+# so it keeps working after this window closes and starts again when you log in.
 cd "${0:A:h}"
 # Finder-launched terminals may not have the same PATH as your development shell.
-export PATH="$HOME/.local/bin:/opt/homebrew/bin:/Library/TeX/texbin:$PATH"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/Library/TeX/texbin:$PATH"
+command -v node >/dev/null 2>&1 || { [[ -s "$HOME/.nvm/nvm.sh" ]] && source "$HOME/.nvm/nvm.sh"; }
 if ! command -v node >/dev/null 2>&1; then
-  if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
-    source "$HOME/.nvm/nvm.sh"
-  fi
+  echo "Paperdesk needs Node.js 22 or newer. Install it from https://nodejs.org, then try again."
+  read -k1 "?Press any key to close."; exit 1
 fi
-if curl -fsS "http://127.0.0.1:${PORT:-4317}/api/projects" >/dev/null 2>&1; then
-  open "http://localhost:${PORT:-4317}"
-  exit 0
-fi
-if [[ ! -d node_modules ]]; then npm install --include=dev; fi
-npm run build
-(sleep 2; open "http://localhost:${PORT:-4317}") &
-npm start
+node bin/paperdesk.js install || read -k1 "?Press any key to close."
