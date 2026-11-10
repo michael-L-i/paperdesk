@@ -4,7 +4,7 @@ Thanks for helping improve Paperdesk! Bug reports, fixes, and small focused feat
 
 ## Setup
 
-You need macOS, Node 22+, TeX Live, Poppler, and (for the agent) the Codex CLI. See [Requirements](README.md#requirements).
+You need macOS, Node 22+, TeX Live, Poppler, and (for the agent) the Codex or Claude Code CLI. See [Install](README.md#install).
 
 ```sh
 git clone https://github.com/michael-L-i/paperdesk.git
@@ -19,14 +19,16 @@ Open http://localhost:4317. `npm run dev` serves the UI through Vite; restart it
 
 | Path | What it does |
 |---|---|
-| `server/index.js` | Express API: files, compile, SyncTeX, agent jobs |
-| `server/latex.js` | Engine detection and `latexmk` builds |
-| `server/ai.js` | Prompt and Codex CLI invocation |
+| `bin/paperdesk.js` | The `paperdesk` command: start, and the background service |
+| `server/index.js` | Express API: projects, files, settings, agent jobs |
+| `server/build.js`, `server/latex.js` | Compiling with `latexmk`, engine detection, and PDF-to-source lookup |
+| `server/ai.js`, `server/agents.js` | The prompt, and one adapter per agent CLI |
+| `server/config.js`, `server/setup.js` | Data folder and port; checks for TeX, Poppler, and agents |
 | `server/projects.js` | The project list and the Paperdesk library |
 | `server/workspace.js` | Path safety, saves, and history snapshots |
 | `server/synctex.js` | PDF-to-source mapping |
 | `src/Home.jsx`, `src/Editor.jsx` | The projects screen and the editor |
-| `src/FileTree.jsx`, `src/Logs.jsx`, `src/PdfPreview.jsx` | File tree, compile logs, and the PDF.js preview |
+| `src/FileTree.jsx`, `src/Logs.jsx`, `src/Settings.jsx`, `src/PdfPreview.jsx` | File tree, compile logs, settings, and the PDF.js preview |
 | `tests/` | Unit tests (`*.test.js`) and browser/live checks (`*.mjs`) |
 
 ## Checks
@@ -39,7 +41,9 @@ npm run build
 npm run test:browser  # end-to-end in Chrome; set CHROME_BIN if needed
 ```
 
-`npm run test:ai` makes a real request with your Codex account. Run it when you change the prompt or `server/ai.js`.
+`npm run test:ai` makes a real request with your Codex account (`npm run test:ai -- claude` for Claude Code). Run it when you change the prompt, `server/ai.js`, or `server/agents.js`.
+
+`npm run dev` uses your real data folder; set `PAPERDESK_DATA_DIR` to try things on a scratch copy.
 
 ## Style
 

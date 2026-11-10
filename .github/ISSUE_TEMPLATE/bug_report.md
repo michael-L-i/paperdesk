@@ -15,7 +15,7 @@ labels: bug
 - macOS:
 - Node (`node --version`):
 - TeX Live (`latexmk --version`):
-- Codex CLI (`codex --version`), if the agent is involved:
+- Agent CLI (`codex --version` or `claude --version`), if the agent is involved:
 
 **Logs or errors**
 Paste the error bar text, server terminal output, or a small `.tex` file that shows the problem.
