@@ -11,4 +11,4 @@ Use the supplied writing profile and human edits to match the user's wording and
 
 In the UI, return the complete new contents of each file you change, with its path relative to the project. The app applies all edits or none, with revision checks and recovery snapshots, then opens the changed file and compiles the main document. For questions without edits, return an answer with no edits. Give short, direct status messages.
 
-When invoked directly, read the selected paper and `.data/writing-style.md` first. Preserve original PDFs and compile requested edits with `latexmk` (`-pdf`, `-xelatex`, or `-lualatex`, matching the document). Report unresolved conversion or compilation errors.
+When invoked directly, read the selected paper first. Preserve original PDFs and compile requested edits with `latexmk` (`-pdf`, `-xelatex`, or `-lualatex`, matching the document). Report unresolved conversion or compilation errors.

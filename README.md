@@ -88,7 +88,7 @@ Each request sends the open document, the conversation, your writing profile, an
 | `PAPERDESK_LIBRARY` | `~/Documents/Paperdesk` | Where new projects are created |
 | `PORT` | `4317` | Server port (listens on 127.0.0.1 only) |
 | `CODEX_BIN` | `codex` | Codex CLI executable |
-| `PAPERDESK_DATA_DIR` | `.data` | Project list, writing profile, and edit examples |
+| `PAPERDESK_DATA_DIR` | `~/Library/Application Support/Paperdesk` | Project list, writing profile, and edit examples |
 
 Each document folder keeps its save history in `.paperdesk/history/` (the last 80 versions).
 
