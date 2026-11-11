@@ -185,24 +185,4 @@ export class Workspace {
     }
     return applied;
   }
-  async create(folder, source) {
-    if (!folder || folder === '.') throw httpError('Give this paper its own folder.');
-    const dir = await this.resolve(folder, false);
-    const file = path.join(dir, 'main.tex');
-    if (source) {
-      if (!source.toLowerCase().endsWith('.pdf')) throw httpError('Choose a PDF source.');
-      await this.resolve(source);
-    }
-    await fs.mkdir(dir, { recursive: true });
-    // Validate again after creation, including existing symlink components.
-    await this.resolve(path.relative(this.root, dir));
-    await fs.writeFile(file, template, { flag: 'wx' }).catch(e => { if (e.code === 'EEXIST') throw httpError('That folder already has main.tex. Open it instead.'); throw e; });
-    try {
-      if (source) {
-        const src = await this.resolve(source);
-        if (src !== path.join(dir, 'source.pdf')) await fs.copyFile(src, path.join(dir, 'source.pdf'), 1);
-      }
-    } catch (e) { await fs.unlink(file); throw e; }
-    return this.read(path.relative(this.root, file));
-  }
 }
