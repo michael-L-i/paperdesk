@@ -97,7 +97,6 @@ try {
   await page.waitForFunction(top=>document.querySelector('.pdf-pages').scrollTop>top+50,thirdTop);
   const detailTop=await page.locator('.pdf-pages').evaluate(el=>el.scrollTop);
   assert.ok(detailTop>thirdTop+50,'Targets within a page honor their vertical coordinate');
-  await page.screenshot({path:'/tmp/paperdesk-reference-jump.png'});
   // Keyboard activation and links going backward work too.
   await page.locator('.pdf-page').nth(1).getByRole('link',{name:'Go to reference 1',exact:true}).focus();
   await page.keyboard.press('Enter');
@@ -133,7 +132,6 @@ try {
   }));
   assert.equal(selectionPaint.highlight,'rgb(181, 213, 255)');
   assert.match(selectionPaint.activeLine,/rgba\(.+, 0\.04\)/,'Active line must allow the selection underneath to show');
-  await page.screenshot({path:'/tmp/paperdesk-inline-selection.png'});
 
   const bbox=(await run('pdftotext',['-bbox',path.join(root,'Course/main.pdf'),'-'])).stdout;
   async function clickPDFWord(pageNumber,word){
@@ -313,7 +311,6 @@ try {
   await page.waitForFunction(x=>visualViewport.offsetLeft>x,firstPan);
   assert.deepEqual(await positions(),beforePan,'Horizontal panning leaves both vertical offsets alone');
   assert.equal(await page.locator('.pdf-pages').evaluate(el=>el.scrollLeft),0,'The PDF does not pan separately');
-  await page.screenshot({path:'/tmp/paperdesk-workspace-pinch.png'});
   await page.mouse.wheel(-2000,0);
   await page.waitForFunction(()=>visualViewport.offsetLeft===0);
   await cdp.send('Emulation.setPageScaleFactor',{pageScaleFactor:1});
@@ -372,7 +369,6 @@ try {
   await page.getByRole('button',{name:'Writing style',exact:true}).click();
   await page.getByLabel('Writing profile').fill('Use short sentences.');
   await page.getByRole('button',{name:'Save',exact:true}).click();
-  await page.screenshot({path:'/tmp/paperdesk-simple.png',fullPage:true});
   // Home lists projects; a cancelled picker stays home, and reopening restores the main file.
   await page.getByRole('button',{name:'All projects'}).click();
   chosenDirectory=null;
@@ -433,7 +429,6 @@ try {
   assert.equal(await reply.locator('.katex-display').count(),1,'Matrix equations use display math');
   assert.equal(await reply.locator('.katex-error').count(),0,'Matrix delimiters do not produce red parse errors');
   assert.equal(await reply.locator('math mtable mtr').count(),8,'Both column vectors keep all four rows');
-  await page.screenshot({path:'/tmp/paperdesk-matrix-reply.png'});
   assert.equal(await page.getByRole('button',{name:'Collapse chat history'}).count(),1,'Sending opens the thread');
   const codexCall=JSON.parse(await fs.readFile(path.join(root,'codex-call.json'),'utf8'));
   assert.ok(codexCall.args.includes('workspace-write'),'The agent can only write in its scratch directory');
@@ -509,8 +504,11 @@ try {
   await page.setViewportSize({width:390,height:844});
   const tree=await page.locator('.tree').boundingBox(), editorBox=await page.locator('.left').boundingBox();
   assert.ok(tree.width>350 && tree.y+tree.height<=editorBox.y+1,'On a phone the file tree stacks above the editor');
-  await page.screenshot({path:'/tmp/paperdesk-simple-mobile.png',fullPage:true});
   assert.deepEqual(errors,[]);
   console.log('Passed: quiet background PDF swaps, preserved scroll, auto-compile debounce, persistent manual mode, PDF selection/copy and inverse search (double-click, source selection, included sources, stale-map rejection), project list, library projects, folder linking, file tree with main-document switching, new and uploaded files, the image and PDF file pane with rename and delete, autosave, style memory, stopping the agent, attachments copied into the project, and PDF-only folder conversion with multi-file agent edits, automatic result loading/compilation, original PDF preservation, reload persistence, failed-build recovery, missing project folders, phone layout, stale-write and origin protection.');
-}catch(e){await page?.screenshot({path:'/tmp/paperdesk-failure.png',timeout:5000}).catch(()=>{});throw e;}
+}catch(e){
+  // Keep a picture of the page at the moment a check failed.
+  const shot=path.join(os.tmpdir(),'paperdesk-failure.png');
+  await page?.screenshot({path:shot,timeout:5000}).then(()=>console.error('Screenshot: '+shot),()=>{});throw e;
+}
 finally{await browser?.close();server.kill('SIGTERM');await fs.rm(root,{recursive:true,force:true});}

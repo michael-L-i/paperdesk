@@ -189,7 +189,7 @@ if (process.env.NODE_ENV === 'production') {
   app.get('/{*path}', (req, res) => res.sendFile(path.join(appDir, 'dist/index.html')));
 } else {
   const { createServer } = await import('vite');
-  // Vite refuses every file path containing ':', which would block an app folder like "Fall 26:27".
+  // Vite refuses every file path containing ':', which would block an app folder like "Notes 10:30".
   // Requests reach Vite only after the loopback and origin checks above.
   const vite = await createServer({ root: appDir, server: { middlewareMode: true, fs: { strict: !appDir.includes(':') } }, appType: 'spa' });
   app.use(vite.middlewares);
