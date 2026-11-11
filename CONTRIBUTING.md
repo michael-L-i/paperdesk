@@ -53,4 +53,8 @@ npm run test:browser  # end-to-end in Chrome; set CHROME_BIN if needed
 - Add or update a test for behavior changes.
 - Write small commits with imperative subjects, such as "Fix stale preview after rename".
 
-Be kind and constructive in issues and reviews.
+Be kind and constructive in issues and reviews; see the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Releases
+
+Bump `version` in `package.json`, add a section to [CHANGELOG.md](CHANGELOG.md), and publish a GitHub release. The Release workflow publishes that version to npm.
