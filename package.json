@@ -1,7 +1,7 @@
 {
   "name": "paperdesk",
   "version": "0.2.0",
-  "description": "Local LaTeX editor with live PDF preview, SyncTeX, and an AI agent powered by the Codex or Claude Code CLI.",
+  "description": "A local Overleaf with an AI agent built in: LaTeX editor with live PDF preview, SyncTeX, and your Codex or Claude Code CLI as the agent.",
   "keywords": [
     "latex",
     "tex",

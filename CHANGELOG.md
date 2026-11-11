@@ -3,7 +3,7 @@
 ## 0.2.0
 
 ### Added
-- `paperdesk` command: `npx paperdesk` starts the app, and `paperdesk install` runs it in the background, starting at login and restarting if it stops.
+- `paperdesk` command: `paperdesk` starts the app, and `paperdesk install` runs it in the background, starting at login and restarting if it stops.
 - Claude Code as an agent beside Codex, chosen in Settings.
 - Settings, with checks for LaTeX, Poppler, and the agent CLIs, and the command to install whatever is missing. It opens on first run when something is missing.
 - **Locate…** for projects whose folder moved; projects that moved with the same parent folder follow.

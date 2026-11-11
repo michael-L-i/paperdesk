@@ -2,11 +2,18 @@
 
 [![CI](https://github.com/michael-L-i/paperdesk/actions/workflows/ci.yml/badge.svg)](https://github.com/michael-L-i/paperdesk/actions/workflows/ci.yml)
 
-**A local LaTeX editor with a live PDF preview and an AI agent that can read your whole project.**
+**A local Overleaf with an AI agent built in.**
 
-Write LaTeX on the left and see the PDF on the right. Ask the agent to explain a problem set, convert a PDF to LaTeX, or edit your document. The agent is the [Codex](https://github.com/openai/codex) or [Claude Code](https://github.com/anthropics/claude-code) CLI you already use. Everything runs on your machine, with your own TeX install and your own agent login.
+Paperdesk is a LaTeX editor that runs on your own machine: source on the left, live PDF on the right, and an agent that reads your whole project, including the PDFs, notes, and code next to your `.tex`, and edits the document with you. The agent is the [Codex](https://github.com/openai/codex) or [Claude Code](https://github.com/anthropics/claude-code) CLI you already use, so there is no API key to set up. Your projects are ordinary folders on your disk.
 
 ![Paperdesk showing LaTeX source, a chat with the agent, and the compiled PDF](docs/screenshot.png)
+
+## Why Paperdesk
+
+- **Your files, your folders.** A project is a folder you already have. Keep using git, Finder, or another editor beside it; open tabs pick up changes from disk.
+- **Your own TeX.** Any package, any engine, no compile limits, and it works offline.
+- **An agent with the full picture.** Ask it to check a proof, convert an assignment PDF to LaTeX, fill in a results table from your data, or fix the error on line 40. It reads what it needs and proposes edits; Paperdesk applies them safely.
+- **Private by default.** The server listens only on your machine. Nothing is uploaded except what the agent reads, which goes to the provider you already use.
 
 ## Features
 
@@ -24,10 +31,10 @@ Write LaTeX on the left and see the PDF on the right. Ask the agent to explain a
 Paperdesk runs on macOS with [Node](https://nodejs.org) 22 or newer.
 
 ```sh
-npx paperdesk
+npx github:michael-L-i/paperdesk
 ```
 
-This starts Paperdesk and opens http://localhost:4317. The first time, **Settings** shows what else it needs and the command to install each piece:
+This downloads Paperdesk, starts it, and opens http://localhost:4317. The first time, **Settings** shows what else it needs and the command to install each piece:
 
 | Needed for | Install |
 |---|---|
@@ -39,10 +46,10 @@ The editor, preview, and SyncTeX work without an agent. With both agents install
 
 ### Keep it running
 
-`npx paperdesk` runs until you close its terminal. To run Paperdesk in the background instead, starting at login and restarting if it ever stops:
+The command above runs until you close its terminal. To run Paperdesk in the background instead, starting at login and restarting if it ever stops:
 
 ```sh
-npm install -g paperdesk
+npm install -g github:michael-L-i/paperdesk
 paperdesk install      # paperdesk uninstall removes it
 ```
 
